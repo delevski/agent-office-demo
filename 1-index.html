@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>משרד הסוכנים · דמו</title>
+<meta name="description" content="דשבורד תלת־ממדי הדגמתי: כל דמות היא סוכן AI שעובד בשביל העסק. נתוני דמו בלבד.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css?v=9">
+</head>
+<body>
+
+<!-- Boot overlay -->
+<div id="boot" role="status" aria-live="polite">
+  <div class="boot-card">
+    <div class="boot-title">משרד הסוכנים</div>
+    <div class="boot-sub">כל דמות היא סוכן AI שעובד בשבילך <span class="hl">דמו</span></div>
+    <div class="boot-bar"><div id="boot-fill"></div></div>
+    <div id="boot-step">מתחיל…</div>
+    <div id="boot-error" class="hidden">
+      <p>הטעינה נכשלה. אפשר לנסות שוב.</p>
+      <button id="boot-retry" class="btn">נסה שוב</button>
+    </div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">▦</span>
+    <span class="brand-name">משרד הסוכנים</span>
+    <span class="badge-demo">דמו</span>
+  </div>
+  <div class="top-actions">
+    <div class="clock" id="clock" title="שעה מקומית">--:--:--</div>
+    <button class="btn btn-gold" id="btn-meeting" type="button">☕ ישיבת בוקר</button>
+    <button class="btn" id="btn-pause" type="button" aria-pressed="false">⏸ השהה</button>
+    <button class="btn" id="btn-speed" type="button">מהירות ×1</button>
+  </div>
+</header>
+
+<main id="layout">
+  <!-- 3D scene -->
+  <section id="view-scene" class="view">
+    <div class="scene-card card">
+      <canvas id="scene" aria-label="סצנת משרד תלת־ממדית"></canvas>
+      <div class="live-pill" id="live-pill"><span class="dot"></span> Realtime · חי (דמו)</div>
+      <button class="btn btn-ghost scene-reset" id="btn-resetcam" type="button">איפוס מצלמה</button>
+      <div class="scene-hint">גרירה לסיבוב · גלגלת לזום · לחיצה על סוכן לפרטים</div>
+      <div class="scene-fallback hidden" id="scene-fallback">
+        <p>לא הצלחנו להציג את הסצנה התלת־ממדית.</p>
+        <button class="btn" id="scene-retry" type="button">נסה שוב</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Side panel (desktop) / Agents list (mobile tab) -->
+  <section id="view-agents" class="view">
+    <div class="kpis" id="kpis"></div>
+    <div class="card agent-panel" id="agent-panel"></div>
+    <div class="card chart-card">
+      <div class="card-head"><h3>אירועים לדקה</h3><span class="muted">30 הדקות האחרונות · דמו</span></div>
+      <canvas id="chart" height="90"></canvas>
+    </div>
+  </section>
+
+  <!-- Event log -->
+  <section id="view-feed" class="view">
+    <div class="card log-card">
+      <div class="card-head">
+        <h3>יומן אירועים <span class="mono tag">events</span></h3>
+        <span class="muted">טבלת דמו · כל שורה מזיזה דמות</span>
+      </div>
+      <div id="log" class="log" dir="ltr" aria-live="polite"></div>
+    </div>
+  </section>
+</main>
+
+<nav id="bottomnav" aria-label="ניווט תחתון">
+  <button class="navbtn active" data-view="view-scene" type="button"><span class="ico">🏢</span>משרד</button>
+  <button class="navbtn" data-view="view-feed" type="button"><span class="ico">📜</span>אירועים<span class="pill" id="feed-pill">0</span></button>
+  <button class="navbtn" data-view="view-agents" type="button"><span class="ico">🧑‍💼</span>סוכנים</button>
+</nav>
+
+<!-- Mobile agent sheet -->
+<div id="sheet" class="hidden" role="dialog" aria-modal="false">
+  <div class="sheet-handle" id="sheet-close"></div>
+  <div id="sheet-body"></div>
+</div>
+
+<div id="toasts" aria-live="assertive"></div>
+
+<footer class="foot">
+  כל הנתונים, השמות והסכומים מומצאים לצורך <span class="hl">הדגמה</span> בלבד · לא נשלח ולא נחייב שום דבר אמיתי
+</footer>
+
+<script type="module" src="./main.js?v=9"></script>
+</body>
+</html>
