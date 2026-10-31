@@ -1,0 +1,6 @@
+name = "agent-office-demo"
+compatibility_date = "2026-10-29"
+
+# Repo root IS the static site (flat layout, mirrors the deployed Worker).
+[assets]
+directory = "."
