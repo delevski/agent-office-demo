@@ -1,0 +1,16 @@
+{
+  "agents": [
+    { "id": "noa",   "name": "נועה",  "role": "סוכנת לידים",  "handle": "noa",   "color": "#7aa2f7", "skin": "#f2c9a4", "hair": "#5a3d28", "longHair": true,
+      "kinds": [["lead.new", "ליד חדש נכנס", "+1"], ["lead.qualified", "ליד סומן כמתאים", "+1"]] },
+    { "id": "maya",  "name": "מאיה",  "role": "סוכנת מכירות", "handle": "maya",  "color": "#ef87a8", "skin": "#e8b48c", "hair": "#2c2320", "longHair": true,
+      "kinds": [["quote.sent", "הצעת מחיר נשלחה", "#"], ["deal.won", "עסקה נסגרה!", "₪"]] },
+    { "id": "itay",  "name": "איתי",  "role": "סוכן שירות",   "handle": "itay",  "color": "#57c98a", "skin": "#f2c9a4", "hair": "#3a2a1c", "longHair": false,
+      "kinds": [["call.done", "שיחת שירות הסתיימה", "min"], ["ticket.closed", "פנייה נסגרה", "#"]] },
+    { "id": "dani",  "name": "דני",   "role": "סוכן גבייה",   "handle": "dani",  "color": "#f2a65a", "skin": "#d9a077", "hair": "#1f1a16", "longHair": false,
+      "kinds": [["payment.received", "תשלום התקבל", "₪"], ["invoice.sent", "חשבונית הופקה", "#"]] },
+    { "id": "shira", "name": "שירה",  "role": "סוכנת תוכן",   "handle": "shira", "color": "#b085e8", "skin": "#f2c9a4", "hair": "#8a5a2b", "longHair": true,
+      "kinds": [["post.draft", "טיוטת פוסט מוכנה", "+1"], ["post.published", "פוסט פורסם", "+1"]] },
+    { "id": "omer",  "name": "עומר",  "role": "סוכן פרסום",   "handle": "omer",  "color": "#5ecfd6", "skin": "#c98e63", "hair": "#24201c", "longHair": false,
+      "kinds": [["ad.report", "דוח קמפיין נבנה", "+1"], ["campaign.tuned", "קמפיין כוונן", "CTR"]] }
+  ]
+}
