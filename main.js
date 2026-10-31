@@ -1,49 +1,70 @@
-// main.js — UI, mock realtime simulation, feed, KPIs, chart. All data is fictional demo data.
-import { createOffice } from './office.js?v=9';
+// main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart.
+import { createOffice } from './office.js?v=10';
 
-/* ---------------- demo agents (fictional) ---------------- */
-const AGENTS = [
-  { id: 'noa',   name: 'נועה',  role: 'סוכנת לידים',    handle: 'noa',   color: '#7aa2f7', colorHex: 0x7aa2f7, skin: 0xf2c9a4, hair: 0x5a3d28, longHair: true,
-    kinds: [ ['lead.new', 'ליד חדש נכנס', () => '+1'], ['lead.qualified', 'ליד סומן כמתאים', () => '+1'] ] },
-  { id: 'maya',  name: 'מאיה',  role: 'סוכנת מכירות',   handle: 'maya',  color: '#ef87a8', colorHex: 0xef87a8, skin: 0xe8b48c, hair: 0x2c2320, longHair: true,
-    kinds: [ ['quote.sent', 'הצעת מחיר נשלחה', () => '#' + rnd(40, 99)], ['deal.won', 'עסקה נסגרה!', () => '₪' + (rnd(3, 18) * 500).toLocaleString('he-IL')] ] },
-  { id: 'itay',  name: 'איתי',  role: 'סוכן שירות',     handle: 'itay',  color: '#57c98a', colorHex: 0x57c98a, skin: 0xf2c9a4, hair: 0x3a2a1c, longHair: false,
-    kinds: [ ['call.done', 'שיחת שירות הסתיימה', () => rnd(2, 14) + 'min'], ['ticket.closed', 'פנייה נסגרה', () => '#' + rnd(100, 999)] ] },
-  { id: 'dani',  name: 'דני',   role: 'סוכן גבייה',     handle: 'dani',  color: '#f2a65a', colorHex: 0xf2a65a, skin: 0xd9a077, hair: 0x1f1a16, longHair: false,
-    kinds: [ ['payment.received', 'תשלום התקבל', () => '₪' + (rnd(2, 40) * 100).toLocaleString('he-IL')], ['invoice.sent', 'חשבונית הופקה', () => '#' + rnd(1000, 1999)] ] },
-  { id: 'shira', name: 'שירה',  role: 'סוכנת תוכן',     handle: 'shira', color: '#b085e8', colorHex: 0xb085e8, skin: 0xf2c9a4, hair: 0x8a5a2b, longHair: true,
-    kinds: [ ['post.draft', 'טיוטת פוסט מוכנה', () => '+1'], ['post.published', 'פוסט פורסם', () => '+1'] ] },
-  { id: 'omer',  name: 'עומר',  role: 'סוכן פרסום',     handle: 'omer',  color: '#5ecfd6', colorHex: 0x5ecfd6, skin: 0xc98e63, hair: 0x24201c, longHair: false,
-    kinds: [ ['ad.report', 'דוח קמפיין נבנה', () => '+1'], ['campaign.tuned', 'קמפיין כוונן', () => 'CTR ' + rnd(1, 6) + '.' + rnd(0, 9) + '%'] ] },
-];
+/* ---------------- roster: data-driven, fetched from roster.json ---------------- */
+const FALLBACK_ROSTER = { agents: [
+  { id:'noa', name:'נועה', role:'סוכנת לידים', handle:'noa', color:'#7aa2f7', skin:'#f2c9a4', hair:'#5a3d28', longHair:true, kinds:[['lead.new','ליד חדש נכנס','+1'],['lead.qualified','ליד סומן כמתאים','+1']] },
+  { id:'maya', name:'מאיה', role:'סוכנת מכירות', handle:'maya', color:'#ef87a8', skin:'#e8b48c', hair:'#2c2320', longHair:true, kinds:[['quote.sent','הצעת מחיר נשלחה','#'],['deal.won','עסקה נסגרה!','₪']] },
+  { id:'itay', name:'איתי', role:'סוכן שירות', handle:'itay', color:'#57c98a', skin:'#f2c9a4', hair:'#3a2a1c', longHair:false, kinds:[['call.done','שיחת שירות הסתיימה','min'],['ticket.closed','פנייה נסגרה','#']] },
+  { id:'dani', name:'דני', role:'סוכן גבייה', handle:'dani', color:'#f2a65a', skin:'#d9a077', hair:'#1f1a16', longHair:false, kinds:[['payment.received','תשלום התקבל','₪'],['invoice.sent','חשבונית הופקה','#']] },
+  { id:'shira', name:'שירה', role:'סוכנת תוכן', handle:'shira', color:'#b085e8', skin:'#f2c9a4', hair:'#8a5a2b', longHair:true, kinds:[['post.draft','טיוטת פוסט מוכנה','+1'],['post.published','פוסט פורסם','+1']] },
+  { id:'omer', name:'עומר', role:'סוכן פרסום', handle:'omer', color:'#5ecfd6', skin:'#c98e63', hair:'#24201c', longHair:false, kinds:[['ad.report','דוח קמפיין נבנה','+1'],['campaign.tuned','קמפיין כוונן','CTR']] },
+]};
+
+let AGENTS = [];
 const STATE_HE = { typing: 'עובד/ת במחשב', walk: 'זז/ה במשרד', idle: 'בהפסקה', celebrate: 'חוגג/ת 🎉', meeting: 'בישיבת בוקר' };
+const LIVE_COLORS = ['#f26d6d','#f7b84d','#8fd14f','#4dc9f7','#c986f2','#f279b6','#ffd166','#6ee7b7'];
+const LIVE_SKINS = ['#f2c9a4','#e8b48c','#d9a077','#c98e63'];
+const LIVE_HAIRS = ['#3a2a1c','#1f1a16','#5a3d28','#24201c','#8a5a2b','#2c2320'];
 
 function rnd(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 function $(sel) { return document.querySelector(sel); }
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+function markerVal(m) {
+  if (m === '+1') return '+1';
+  if (m === '#') return '#' + rnd(40, 999);
+  if (m === '₪') return '₪' + (rnd(3, 40) * 100).toLocaleString('he-IL');
+  if (m === 'min') return rnd(2, 14) + 'min';
+  if (m === 'CTR') return 'CTR ' + rnd(1, 6) + '.' + rnd(0, 9) + '%';
+  return m || '';
+}
+
+const agentStats = new Map(); // id -> {events, last, state}
+function statOf(id) {
+  if (!agentStats.has(id)) agentStats.set(id, { events: 0, last: '—', state: 'typing' });
+  return agentStats.get(id);
+}
 
 /* ---------------- boot with progress + retry ---------------- */
 const bootFill = $('#boot-fill'), bootStep = $('#boot-step');
 function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textContent = text; }
 
 let office = null;
-function initOffice() {
-  return new Promise((resolve, reject) => {
-    try {
-      bootSet(35, 'בונה את המשרד…');
-      const canvas = $('#scene');
-      office = createOffice(canvas, AGENTS, { onSelect: id => selectAgent(id, true) });
-      bootSet(75, 'מעסיק סוכנים…');
-      resolve();
-    } catch (e) { reject(e); }
-  });
+async function loadRoster() {
+  try {
+    const r = await fetch('./roster.json?v=10');
+    if (!r.ok) throw new Error('roster ' + r.status);
+    const d = await r.json();
+    if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
+    return d.agents;
+  } catch (e) {
+    console.warn('roster fallback:', e.message);
+    return FALLBACK_ROSTER.agents;
+  }
 }
 
 async function boot() {
   $('#boot-error').classList.add('hidden');
   try {
     bootSet(15, 'טוען מנוע תלת־ממד…');
-    await new Promise(r => setTimeout(r, 120));
-    await initOffice();
+    await delay(100);
+    bootSet(35, 'קורא סגל סוכנים…');
+    AGENTS = await loadRoster();
+    bootSet(55, 'בונה את המשרד…');
+    office = createOffice($('#scene'), AGENTS, { onSelect: id => selectAgent(id, true) });
+    bootSet(85, 'מתחבר לערוץ החי…');
+    connectLive();
+    pollEvents(); // catch-up: show recent real events immediately
     bootSet(100, 'מוכן!');
     setTimeout(() => $('#boot').classList.add('hidden'), 250);
     startSim();
@@ -55,7 +76,7 @@ async function boot() {
 }
 $('#boot-retry').addEventListener('click', boot);
 
-/* ---------------- busy wrapper: loader + double-click guard + error/retry toast ---------------- */
+/* ---------------- busy wrapper + toasts ---------------- */
 function toast(msg, { err = false, retry = null } = {}) {
   const el = document.createElement('div');
   el.className = 'toast' + (err ? ' err' : '');
@@ -87,6 +108,34 @@ function withBusy(btn, labelWhileBusy, fn) {
 /* ---------------- clock ---------------- */
 setInterval(() => { $('#clock').textContent = new Date().toLocaleTimeString('he-IL', { hour12: false }); }, 1000);
 
+/* ---------------- mode: demo (simulation) vs live (real events) ---------------- */
+let mode = 'demo';
+function setPill() {
+  const pill = $('#live-pill');
+  const label = pill.querySelector('.pill-label');
+  pill.classList.toggle('paused', mode === 'demo' && paused);
+  pill.classList.toggle('live', mode === 'live');
+  label.textContent = mode === 'live' ? 'חי · אירועים אמיתיים' : (paused ? 'דמו · מושהה' : 'דמו · סימולציה');
+}
+function enterLiveMode() {
+  if (mode === 'live') return;
+  mode = 'live';
+  clearTimeout(simTimer);
+  toast('⚡ המשרד עבר למצב חי — מגיעים אירועים אמיתיים');
+  setPill();
+}
+function enterDemoMode() {
+  mode = 'demo';
+  paused = false;
+  scheduleNext();
+  setPill();
+  toast('חזרנו למצב דמו (סימולציה)');
+}
+$('#live-pill').addEventListener('click', () => {
+  if (mode === 'live') enterDemoMode();
+  else { mode = 'live'; clearTimeout(simTimer); setPill(); toast('מצב חי — ממתין לאירועים אמיתיים'); }
+});
+
 /* ---------------- KPIs ---------------- */
 const kpis = {
   leads:   { label: 'לידים היום',   v: 0, money: false },
@@ -105,6 +154,13 @@ function renderKpis() {
 function bumpKpi(k, amount) {
   kpis[k].v += amount; renderKpis();
   const el = $('#kpi-' + k); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+}
+function bumpKpisForKind(kind, val) {
+  const n = parseInt(String(val).replace(/[^\d]/g, ''), 10) || 0;
+  if (/^lead/.test(kind)) bumpKpi('leads', 1);
+  else if (/^(quote|deal)/.test(kind)) { bumpKpi('quotes', 1); if (/deal/.test(kind) && n) bumpKpi('revenue', n); }
+  else if (/^(call|ticket|support)/.test(kind)) bumpKpi('calls', 1);
+  else if (/^(payment|invoice|charge)/.test(kind) && n) bumpKpi('revenue', n);
 }
 renderKpis();
 
@@ -126,14 +182,16 @@ function logLine(agent, kind, val, he) {
 
 /* ---------------- agent panel ---------------- */
 let selectedId = null;
-const agentStats = new Map(AGENTS.map(a => [a.id, { events: 0, last: '—', state: 'typing' }]));
-
+function findAgent(idOrHandle) {
+  return AGENTS.find(x => x.id === idOrHandle || x.handle === idOrHandle);
+}
 function panelHtml(a) {
-  const st = agentStats.get(a.id);
+  const st = statOf(a.id);
+  const tag = a.live ? 'חי' : 'דמו';
   return `
     <div class="ap-head">
-      <div class="ap-avatar" style="background:${a.color}">${a.name[0]}</div>
-      <div><div class="ap-name">${a.name}</div><div class="ap-role">${a.role} · דמו</div></div>
+      <div class="ap-avatar" style="background:${a.color}">${(a.name || '?')[0]}</div>
+      <div><div class="ap-name">${a.name}</div><div class="ap-role">${a.role} · ${tag}</div></div>
     </div>
     <div class="ap-status"><span class="dot" style="background:${a.color}"></span><span>${STATE_HE[st.state] || st.state}</span></div>
     <div class="ap-row"><span>פעולה אחרונה</span><span class="muted">${st.last}</span></div>
@@ -153,25 +211,25 @@ function renderPanel(a) {
     });
   });
 }
-function selectAgent(id, fromScene = false) {
+function selectAgent(id) {
   selectedId = id;
-  const a = AGENTS.find(x => x.id === id);
+  const a = findAgent(id);
   if (!a) return;
   office.focus(id);
   renderPanel(a);
-  if (fromScene && window.innerWidth <= 900) { /* sheet opens over scene */ }
 }
 $('#sheet-close').addEventListener('click', () => $('#sheet').classList.add('hidden'));
 
-/* desktop side panel default content */
 function renderPanelDefault() {
-  $('#agent-panel').innerHTML = `
-    <div class="card-head" style="padding:0 0 8px"><h3>הסוכנים</h3><span class="muted">${AGENTS.length} פעילים · דמו</span></div>
+  const el = $('#agent-panel');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="card-head" style="padding:0 0 8px"><h3>הסוכנים</h3><span class="muted">${AGENTS.length} פעילים</span></div>
     <div class="ag-list">${AGENTS.map(a => {
-      const st = agentStats.get(a.id);
+      const st = statOf(a.id);
       return `<div class="ag-item" data-id="${a.id}">
-        <div class="ap-avatar" style="background:${a.color};width:34px;height:34px;font-size:.9rem">${a.name[0]}</div>
-        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}</span></div>
+        <div class="ap-avatar" style="background:${a.color};width:34px;height:34px;font-size:.9rem">${(a.name || '?')[0]}</div>
+        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ⚡' : ''}</span></div>
         <div class="ag-last">${st.last}</div></div>
         <span class="mono muted">${st.events}</span>
       </div>`;
@@ -179,11 +237,22 @@ function renderPanelDefault() {
   document.querySelectorAll('.ag-item').forEach(el =>
     el.addEventListener('click', () => selectAgent(el.dataset.id)));
 }
+function refreshAgentViews(a) {
+  if (selectedId === a.id && window.innerWidth > 900) renderPanel(a);
+  if (selectedId === a.id && window.innerWidth <= 900 && !$('#sheet').classList.contains('hidden')) renderPanel(a);
+  if (!selectedId) renderPanelDefault();
+}
+function updateWallScreen() {
+  office.updateScreen(
+    AGENTS.map(x => ({ v: statOf(x.id).events, color: x.color })),
+    AGENTS.reduce((s, x) => s + statOf(x.id).events, 0));
+}
 
-/* ---------------- chart: events per minute ---------------- */
+/* ---------------- chart ---------------- */
 const chartData = Array.from({ length: 30 }, () => rnd(0, 5)); // fictional demo history
 function drawChart() {
   const cv = $('#chart');
+  if (!cv || !cv.clientWidth) return;
   const dpr = Math.min(window.devicePixelRatio, 2);
   const W = cv.clientWidth * dpr, H = 90 * dpr;
   if (cv.width !== W) { cv.width = W; cv.height = H; }
@@ -192,7 +261,7 @@ function drawChart() {
   const max = Math.max(4, ...chartData);
   c.strokeStyle = '#f5b301'; c.lineWidth = 2 * dpr; c.beginPath();
   chartData.forEach((v, i) => {
-    const x = W - (i + 0.5) / chartData.length * W;      // RTL: newest on the left
+    const x = W - (i + 0.5) / chartData.length * W;
     const y = H - 6 * dpr - (v / max) * (H - 16 * dpr);
     i ? c.lineTo(x, y) : c.moveTo(x, y);
   });
@@ -208,64 +277,115 @@ window.addEventListener('resize', drawChart);
 setInterval(() => { chartData.unshift(0); chartData.pop(); drawChart(); }, 60_000);
 drawChart();
 
-/* ---------------- simulation engine ---------------- */
-let paused = false, speed = 1, simTimer = null, meetingActive = false;
+/* ---------------- event application (shared by demo + live) ---------------- */
+function applyEventToOffice(a, kind, val, he) {
+  logLine(a, kind, val, he);
+  chartData[0]++;
+  const st = statOf(a.id);
+  st.events++; st.last = he || kind;
+  bumpKpisForKind(kind, val);
+  if (/deal|payment|won|closed/.test(kind) && Math.random() < 0.9) office.celebrate(a.id);
+  else if (Math.random() < 0.22) {
+    office.walkTo(a.id, { x: -6.8, y: 0, z: 3.4 });
+    st.state = 'walk';
+    setTimeout(() => { office.goHome(a.id); st.state = 'typing'; refreshAgentViews(a); }, 2600);
+  } else office.setState(a.id, 'typing');
+  refreshAgentViews(a);
+  updateWallScreen();
+}
+
+/* ---------------- live channel: WebSocket + polling fallback ---------------- */
+let lastId = 0, ws = null, liveSeen = false;
+function connectLive() {
+  let sock;
+  try {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    sock = new WebSocket(`${proto}://${location.host}/api/ws`);
+  } catch { return; } // polling covers us
+  ws = sock;
+  sock.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'event' && m.event) onLiveEvent(m.event);
+    } catch {}
+  };
+  sock.onclose = () => { if (ws === sock) ws = null; setTimeout(connectLive, 5000); };
+  sock.onerror = () => { try { sock.close(); } catch {} };
+}
+async function pollEvents() {
+  try {
+    const r = await fetch('./api/events?since=' + lastId);
+    if (!r.ok) return;
+    const d = await r.json();
+    (d.events || []).forEach(onLiveEvent);
+    if (typeof d.lastId === 'number') lastId = Math.max(lastId, d.lastId);
+  } catch {}
+}
+setInterval(pollEvents, 7000); // catch-up; no-op when WS delivers first
+
+function onLiveEvent(ev) {
+  if (typeof ev.id === 'number') { if (ev.id <= lastId) return; lastId = ev.id; }
+  enterLiveMode();
+  liveSeen = true;
+  let a = findAgent(ev.agent);
+  if (!a) a = createLiveAgent(ev.agent);
+  const he = ev.note || ev.kind;
+  applyEventToOffice(a, ev.kind || 'event', ev.value || '', he);
+}
+
+function createLiveAgent(handle) {
+  let h = 0;
+  for (const c of String(handle)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const meta = {
+    id: 'live-' + handle,
+    name: String(handle),
+    role: 'סוכן חי',
+    handle: String(handle),
+    color: LIVE_COLORS[h % LIVE_COLORS.length],
+    skin: LIVE_SKINS[h % LIVE_SKINS.length],
+    hair: LIVE_HAIRS[h % LIVE_HAIRS.length],
+    longHair: h % 2 === 0,
+    live: true,
+    kinds: [],
+  };
+  AGENTS.push(meta);
+  office.addAgent(meta);
+  statOf(meta.id);
+  renderPanelDefault();
+  toast(`⚡ סוכן חדש עלה למשרד: ${handle}`);
+  return meta;
+}
+
+/* ---------------- demo simulation ---------------- */
+let paused = false, speed = 1, simTimer = null, meetingActive = false, meetingDone = false;
 
 function pickAgent() {
-  const weights = [3, 2, 2, 2, 1, 1]; // noa busiest, like a leads agent
-  const total = weights.reduce((a, b) => a + b, 0);
+  const weights = AGENTS.map(a => (a.kinds || []).some(k => /^lead/.test(k[0])) ? 3 : (a.kinds || []).length ? 2 : 0.2);
+  const total = weights.reduce((x, y) => x + y, 0);
   let r = Math.random() * total;
   for (let i = 0; i < AGENTS.length; i++) { r -= weights[i]; if (r <= 0) return AGENTS[i]; }
   return AGENTS[0];
 }
 
 function fireEvent() {
-  if (meetingActive) return;
+  if (meetingActive || mode !== 'demo') return;
   const a = pickAgent();
-  const [kind, he, valFn] = a.kinds[rnd(0, a.kinds.length - 1)];
-  const val = valFn();
-  logLine(a, kind, val, he);
-  chartData[0]++;
-  const st = agentStats.get(a.id);
-  st.events++; st.last = he;
-  // KPI routing
-  if (kind === 'lead.new' || kind === 'lead.qualified') bumpKpi('leads', 1);
-  if (kind === 'quote.sent') bumpKpi('quotes', 1);
-  if (kind === 'deal.won') { bumpKpi('quotes', 1); bumpKpi('revenue', parseInt(val.replace(/[^\d]/g, ''), 10) || 0); }
-  if (kind === 'call.done' || kind === 'ticket.closed') bumpKpi('calls', 1);
-  if (kind === 'payment.received') bumpKpi('revenue', parseInt(val.replace(/[^\d]/g, ''), 10) || 0);
-  // animate the character — a new row moves the character
-  if (kind === 'deal.won' || kind === 'payment.received') office.celebrate(a.id);
-  else if (Math.random() < 0.25) {
-    // short walk: get coffee, come back
-    office.walkTo(a.id, { x: -6.8, y: 0, z: 3.4 });
-    st.state = 'walk';
-    setTimeout(() => { office.goHome(a.id); st.state = 'typing'; refreshAgentViews(a); }, 2600);
-  } else office.setState(a.id, 'typing');
-  refreshAgentViews(a);
-  // wall screen
-  office.updateScreen(AGENTS.map(x => ({ v: agentStats.get(x.id).events, color: x.color })), [...agentStats.values()].reduce((s, x) => s + x.events, 0));
-}
-
-function refreshAgentViews(a) {
-  if (selectedId === a.id && window.innerWidth > 900) renderPanel(a);
-  if (selectedId === a.id && window.innerWidth <= 900 && !$('#sheet').classList.contains('hidden')) renderPanel(a);
-  if (!selectedId && window.innerWidth > 900) renderPanelDefault();
+  if (!a || !(a.kinds || []).length) return;
+  const [kind, he, marker] = a.kinds[rnd(0, a.kinds.length - 1)];
+  applyEventToOffice(a, kind, markerVal(marker), he);
 }
 
 function scheduleNext() {
   clearTimeout(simTimer);
-  if (paused) return;
+  if (paused || mode !== 'demo') return;
   simTimer = setTimeout(() => { fireEvent(); scheduleNext(); }, rnd(1800, 4200) / speed);
 }
 function startSim() {
-  // opening burst so the office is alive immediately
-  office.updateScreen(AGENTS.map(x => ({ v: 0, color: x.color })), 0);
+  updateWallScreen();
   let burst = 0;
   const b = setInterval(() => { fireEvent(); if (++burst >= 5) clearInterval(b); }, 450);
   setTimeout(scheduleNext, 3000);
-  // one automatic morning meeting shortly after load — the reel's signature shot
-  setTimeout(() => { if (!meetingDone && !paused) startMeeting(true); }, 18000);
+  setTimeout(() => { if (!meetingDone && !paused && mode === 'demo') startMeeting(true); }, 18000);
 }
 
 /* ---------------- controls ---------------- */
@@ -275,10 +395,9 @@ $('#btn-pause').addEventListener('click', e => {
     await delay(300);
     paused = !paused;
     btn.setAttribute('aria-pressed', String(paused));
-    $('#live-pill').classList.toggle('paused', paused);
-    $('#live-pill').lastChild.textContent = paused ? ' Realtime · מושהה' : ' Realtime · חי (דמו)';
     if (paused) clearTimeout(simTimer); else scheduleNext();
-    if (selectedId) renderPanel(AGENTS.find(x => x.id === selectedId));
+    setPill();
+    if (selectedId) renderPanel(findAgent(selectedId));
     return paused ? '▶ הפעל' : '⏸ השהה';
   });
 });
@@ -291,32 +410,35 @@ $('#btn-speed').addEventListener('click', e => {
     return `מהירות ×${speed}`;
   });
 });
-let meetingDone = false;
 function startMeeting(auto = false) {
   meetingActive = true; meetingDone = true;
   if (window.innerWidth <= 900) switchView('view-scene');
   toast(auto ? 'ישיבת בוקר אוטומטית — הסוכנים מתאספים ☕' : 'הסוכנים מתאספים לישיבת בוקר ☕');
   office.gatherAll();
-  AGENTS.forEach(a => { agentStats.get(a.id).state = 'meeting'; });
-  if (!selectedId && window.innerWidth > 900) renderPanelDefault();
+  AGENTS.forEach(a => { statOf(a.id).state = 'meeting'; });
+  renderPanelDefault();
   setTimeout(() => {
     office.disperseAll();
-    AGENTS.forEach(a => { agentStats.get(a.id).state = 'typing'; });
+    AGENTS.forEach(a => { statOf(a.id).state = 'typing'; });
     meetingActive = false;
     toast('ישיבת הבוקר הסתיימה — חזרו לעבוד 💪');
-    if (selectedId) renderPanel(AGENTS.find(x => x.id === selectedId));
+    if (selectedId) renderPanel(findAgent(selectedId));
   }, 7000);
 }
 $('#btn-meeting').addEventListener('click', e => {
   const btn = e.currentTarget;
   if (meetingActive) return;
-  withBusy(btn, 'מזמן…', async () => {
-    await delay(350);          // "scheduling" step with visible loader
+  withBusy(btn, 'מזמין…', async () => {
+    await delay(350);
     startMeeting(false);
   });
 });
 $('#btn-resetcam').addEventListener('click', e => {
-  withBusy(e.currentTarget, 'מאפס…', async () => { await delay(200); office.unfocus(); office.resetCam(); selectedId = null; if (window.innerWidth > 900) renderPanelDefault(); });
+  withBusy(e.currentTarget, 'מאפס…', async () => {
+    await delay(200);
+    office.unfocus(); office.resetCam(); selectedId = null;
+    renderPanelDefault();
+  });
 });
 $('#scene-retry').addEventListener('click', () => location.reload());
 
@@ -326,16 +448,11 @@ function switchView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === id));
   document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('active', b.dataset.view === id));
   if (id === 'view-feed') { feedCount.n = 0; $('#feed-pill').textContent = '0'; }
-  if (id === 'view-agents' && !selectedId) renderPanelDefaultMobile();
+  if (id === 'view-agents' && !selectedId) renderPanelDefault();
   drawChart();
-}
-function renderPanelDefaultMobile() {
-  // reuse list inside agent-panel for the agents tab on mobile
-  renderPanelDefault();
 }
 document.querySelectorAll('.navbtn').forEach(b =>
   b.addEventListener('click', () => {
-    // tab switch shows a quick loader state on the button
     const btn = b;
     if (btn.dataset.busy) return;
     btn.dataset.busy = '1';
@@ -345,13 +462,9 @@ document.querySelectorAll('.navbtn').forEach(b =>
     setTimeout(() => { ico.textContent = orig; delete btn.dataset.busy; switchView(btn.dataset.view); }, 180);
   }));
 
-/* default view on mobile */
 if (window.innerWidth <= 900) switchView('view-scene');
 else renderPanelDefault();
-
-/* keep desktop panel fresh */
 setInterval(() => { if (window.innerWidth > 900 && !selectedId) renderPanelDefault(); }, 5000);
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
+setPill();
 boot();
