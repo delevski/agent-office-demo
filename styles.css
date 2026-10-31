@@ -88,9 +88,10 @@ button{font-family:inherit}
 .live-pill{
   position:absolute;top:12px;right:12px;display:flex;align-items:center;gap:7px;
   background:rgba(20,16,10,.82);border:1px solid var(--line);border-radius:99px;
-  padding:5px 12px;font-size:.75rem;font-weight:700;direction:ltr;
+  padding:5px 12px;font-size:.75rem;font-weight:700;color:var(--text);cursor:pointer;
 }
-.live-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.6s infinite}
+.live-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold);animation:pulse 1.6s infinite}
+.live-pill.live .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
 .live-pill.paused .dot{background:var(--red);box-shadow:none;animation:none}
 @keyframes pulse{50%{opacity:.35}}
 .scene-reset{position:absolute;top:12px;left:12px;font-size:.75rem;padding:6px 10px}
