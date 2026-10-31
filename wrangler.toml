@@ -1,6 +1,14 @@
 name = "agent-office-demo"
 compatibility_date = "2026-10-29"
+main = "worker.js"
 
-# Repo root IS the static site (flat layout, mirrors the deployed Worker).
+# Repo root IS the static site (flat layout, mirrors the deployed Worker assets).
 [assets]
 directory = "."
+
+[durable_objects]
+bindings = [{ name = "HUB", class_name = "EventHub" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EventHub"]
