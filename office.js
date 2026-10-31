@@ -248,20 +248,34 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
   }
 
   const agents = new Map();
-  agentsMeta.forEach((meta, i) => {
+  const usedSpots = new Set();
+  let standingCount = 0;
+  function addCharacter(meta) {
     const ch = makeCharacter(meta);
-    const spot = deskSpots[i];
-    ch.g.position.copy(spot.seat);
-    ch.g.position.y = 0.28;               // seated on chair
-    ch.g.rotation.y = 0;                  // face +z (toward the isometric camera), desk in front
-    ch.state = 'typing';
-    ch.seat = spot.seat.clone(); ch.seat.y = 0.28;
+    const freeIdx = deskSpots.findIndex((_, i) => !usedSpots.has(i));
+    let seat, standing;
+    if (freeIdx >= 0) {
+      usedSpots.add(freeIdx);
+      seat = deskSpots[freeIdx].seat.clone(); seat.y = 0.28;
+      standing = false;
+    } else {
+      const a = standingCount * 1.15 + 0.6;
+      seat = new THREE.Vector3(MEET.x + Math.cos(a) * 2.7, 0, MEET.z + Math.sin(a) * 2.7);
+      standing = true; standingCount++;
+    }
+    ch.g.position.copy(seat);
+    ch.g.rotation.y = standing ? Math.atan2(MEET.x - seat.x, MEET.z - seat.z) : 0;
+    ch.state = standing ? 'idle' : 'typing';
+    ch.seat = seat.clone();
+    ch.standing = standing;
     ch.walkTarget = null;
     ch.stateT = Math.random() * 10;
-    ch.meetOffset = new THREE.Vector3(Math.cos(i / agentsMeta.length * Math.PI * 2) * 1.25, 0, Math.sin(i / agentsMeta.length * Math.PI * 2) * 1.25);
+    ch.meetOffset = new THREE.Vector3(0, 0, 0);
     scene.add(ch.g);
     agents.set(meta.id, ch);
-  });
+    return ch;
+  }
+  agentsMeta.forEach(meta => addCharacter(meta));
 
   // ---- interaction: drag rotate / wheel zoom / click select ----
   const ray = new THREE.Raycaster();
@@ -329,7 +343,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
           ch.legs[0].rotation.x = Math.sin(t * 11) * 0.7;
           ch.legs[1].rotation.x = -Math.sin(t * 11) * 0.7;
         }
-      } else if (ch.state === 'typing') {
+      } else if (ch.state === 'typing' && !ch.standing) {
         ch.legs.forEach(l => l.rotation.x = 0);
         p.y = ch.seat && p.distanceTo(ch.seat) < 0.2 ? ch.seat.y : p.y;
         ch.arms[0].rotation.x = -0.9 + Math.sin(t * 9 + ch.stateT) * 0.18;
@@ -359,6 +373,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
 
   // ---- public API ----
   return {
+    addAgent(meta) { return addCharacter(meta); },
+    hasAgent(id) { return agents.has(id); },
     setState(id, state) {
       const ch = agents.get(id); if (!ch) return;
       ch.state = state; ch.stateT = 0;
@@ -373,15 +389,22 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
     },
     goHome(id) {
       const ch = agents.get(id); if (!ch) return;
-      this.walkTo(id, ch.seat, 'typing', () => { ch.g.rotation.y = 0; });
+      const back = ch.standing ? 'idle' : 'typing';
+      this.walkTo(id, ch.seat, back, () => {
+        ch.g.rotation.y = ch.standing ? Math.atan2(MEET.x - ch.seat.x, MEET.z - ch.seat.z) : 0;
+      });
     },
     gatherAll() {
-      for (const ch of agents.values())
-        this.walkTo(ch.meta.id, MEET.clone().add(ch.meetOffset), 'meeting', () => {
-          // face the circle center
+      let i = 0; const n = agents.size;
+      for (const ch of agents.values()) {
+        const ang = (i++ / Math.max(n, 1)) * Math.PI * 2;
+        const r = 1.15 + (i % 2) * 0.55;
+        const spot = new THREE.Vector3(MEET.x + Math.cos(ang) * r, 0, MEET.z + Math.sin(ang) * r);
+        this.walkTo(ch.meta.id, spot, 'meeting', () => {
           const c = ch.g.position;
           ch.g.rotation.y = Math.atan2(MEET.x - c.x, MEET.z - c.z);
         });
+      }
     },
     disperseAll() { for (const id of agents.keys()) this.goHome(id); },
     focus(id) {
