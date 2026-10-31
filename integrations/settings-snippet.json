@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "AGENT_OFFICE_TOKEN=PASTE_TOKEN_HERE AGENT_OFFICE_NAME=claude-code ~/.claude/hooks/office-hook.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "AGENT_OFFICE_TOKEN=PASTE_TOKEN_HERE AGENT_OFFICE_NAME=claude-code ~/.claude/hooks/office-hook.sh" }
+        ]
+      }
+    ]
+  }
+}
