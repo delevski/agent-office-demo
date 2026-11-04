@@ -1,101 +1,123 @@
-// worker.js — Agent Office backend: static assets + realtime event ingestion.
+// worker.js — Agent Office backend: static assets + realtime event ingestion + Ori's login.
 // Routes:
-//   POST /api/ingest   (X-Ingest-Token auth) -> validate, store, broadcast
-//   GET  /api/events?since=N                 -> polling fallback / catch-up
-//   GET  /api/ws       (WebSocket upgrade)   -> live event stream
-//   everything else                          -> static assets (the site)
+//   POST /api/ingest                 agent report (Bearer per-agent token, or legacy X-Ingest-Token)
+//   POST /api/agents/:id/heartbeat   full snapshot from one agent (Bearer token of that agent)
+//   POST /api/login  {password}      -> sets the long-lived signed session cookie
+//   POST /api/logout                 -> clears it
+//   GET  /api/me                     -> {loggedIn, loginConfigured}
+//   GET  /api/agents                 (session) all agents' live state
+//   GET  /api/agents/:id             (session) one agent
+//   GET  /api/events?since=N         (session) polling fallback / catch-up
+//   GET  /api/ws                     (session) WebSocket live stream
+//   everything else                  -> static assets (the site; demo mode needs no login)
+
+import { normalizeReport, agentId } from './server/agents.js';
+import {
+  checkPassword, isLoggedIn, loginConfigured, makeSession, sessionCookie, tokenAgents, writerFor,
+} from './server/auth.js';
+
+export { EventHub } from './server/hub.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type,X-Ingest-Token',
+  'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Ingest-Token',
 };
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', ...CORS } });
+function json(obj, status = 200, headers = {}) {
+  return new Response(JSON.stringify(obj), {
+    status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...CORS, ...headers },
+  });
+}
+// Private reads carry no CORS header: only the office page itself (same origin) can read them.
+function privateJson(obj, status = 200, headers = {}) {
+  return new Response(JSON.stringify(obj), {
+    status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },
+  });
 }
 
-function sanitize(body) {
-  const s = (v, n) => String(v ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n);
-  return {
-    agent: s(body.agent, 40) || 'unknown',
-    kind: s(body.kind, 40) || 'event',
-    value: s(body.value, 60),
-    note: s(body.note, 140),
-    ts: Date.now(),
-  };
+function hub(env) {
+  return env.HUB.get(env.HUB.idFromName('global'));
+}
+
+async function readJson(request) {
+  const text = await request.text();
+  if (text.length > 32_000) throw new Error('too large');
+  return JSON.parse(text || '{}');
+}
+
+async function ingest(request, env, forcedAgent = null) {
+  const who = writerFor(request, env);
+  if (!who.ok) return json({ ok: false, error: 'unauthorized' }, 401);
+  let body;
+  try { body = await readJson(request); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
+  if (forcedAgent) { body.agent = forcedAgent; body.kind = 'heartbeat'; }
+  // A per-agent token may only write as its own agent.
+  if (who.agent) {
+    if (body.agent && agentId(body.agent) !== who.agent) return json({ ok: false, error: 'token does not match agent' }, 403);
+    body.agent = who.agent;
+  }
+  const report = normalizeReport(body);
+  if (!report.agent) report.agent = 'unknown';
+  const res = await hub(env).fetch('https://hub/report', { method: 'POST', body: JSON.stringify(report) });
+  return json({ ok: true, ...(await res.json()) });
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const path = url.pathname;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    if (url.pathname === '/api/ingest' && request.method === 'POST') {
-      const token = request.headers.get('X-Ingest-Token') || '';
-      if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN)
-        return json({ ok: false, error: 'unauthorized' }, 401);
-      let body;
-      try { body = await request.json(); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
-      const stub = env.HUB.get(env.HUB.idFromName('global'));
-      const res = await stub.fetch('https://hub/append', { method: 'POST', body: JSON.stringify(sanitize(body)) });
-      return json({ ok: true, event: await res.json() });
+    /* ---- writes from agents ---- */
+    if (path === '/api/ingest' && request.method === 'POST') return ingest(request, env);
+    const hb = /^\/api\/agents\/([^/]+)\/heartbeat$/.exec(path);
+    if (hb && request.method === 'POST') return ingest(request, env, agentId(decodeURIComponent(hb[1])));
+
+    /* ---- login ---- */
+    if (path === '/api/login' && request.method === 'POST') {
+      if (!loginConfigured(env)) return privateJson({ ok: false, error: 'login not configured' }, 503);
+      const ip = request.headers.get('CF-Connecting-IP') || 'local';
+      const guard = await (await hub(env).fetch('https://hub/login-guard?ip=' + encodeURIComponent(ip))).json();
+      if (guard.blocked) return privateJson({ ok: false, error: 'too many attempts' }, 429);
+      let body = {};
+      try { body = await readJson(request); } catch { /* empty */ }
+      if (!checkPassword(env, body.password)) {
+        await hub(env).fetch('https://hub/login-fail?ip=' + encodeURIComponent(ip), { method: 'POST' });
+        return privateJson({ ok: false, error: 'wrong password' }, 401);
+      }
+      const cookie = sessionCookie(await makeSession(env), url.protocol === 'https:');
+      return privateJson({ ok: true }, 200, { 'Set-Cookie': cookie });
+    }
+    if (path === '/api/logout' && request.method === 'POST') {
+      return privateJson({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', url.protocol === 'https:', 0) });
+    }
+    if (path === '/api/me') {
+      return privateJson({ loggedIn: await isLoggedIn(request, env), loginConfigured: loginConfigured(env) });
     }
 
-    if (url.pathname === '/api/events') {
-      const stub = env.HUB.get(env.HUB.idFromName('global'));
-      const res = await stub.fetch('https://hub/list' + (url.search || ''));
-      return new Response(res.body, { headers: { 'Content-Type': 'application/json', ...CORS } });
-    }
+    /* ---- private reads: Ori only ---- */
+    if (path.startsWith('/api/')) {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
 
-    if (url.pathname === '/api/ws') {
-      if ((request.headers.get('Upgrade') || '') !== 'websocket')
-        return new Response('expected websocket upgrade', { status: 426 });
-      const stub = env.HUB.get(env.HUB.idFromName('global'));
-      return stub.fetch(request);
+      if (path === '/api/agents' || /^\/api\/agents\/[^/]+$/.test(path)) {
+        const one = path === '/api/agents' ? '' : agentId(decodeURIComponent(path.split('/')[3]));
+        const known = encodeURIComponent(tokenAgents(env).join(','));
+        const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
+        return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
+      if (path === '/api/events') {
+        const res = await hub(env).fetch('https://hub/list' + (url.search || ''));
+        return new Response(res.body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
+      if (path === '/api/ws') {
+        if ((request.headers.get('Upgrade') || '') !== 'websocket')
+          return new Response('expected websocket upgrade', { status: 426 });
+        return hub(env).fetch(request);
+      }
+      return privateJson({ ok: false, error: 'not found' }, 404);
     }
 
     return env.ASSETS.fetch(request);
   },
 };
-
-export class EventHub {
-  constructor(state) {
-    this.state = state;
-    this.state.blockConcurrencyWhile(async () => {
-      this.events = (await this.state.storage.get('events')) || [];
-      this.seq = (await this.state.storage.get('seq')) || 0;
-    });
-  }
-
-  async fetch(request) {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/append') {
-      const ev = await request.json();
-      ev.id = ++this.seq;
-      this.events.push(ev);
-      if (this.events.length > 200) this.events = this.events.slice(-200);
-      await this.state.storage.put({ events: this.events, seq: this.seq });
-      const msg = JSON.stringify({ type: 'event', event: ev });
-      for (const ws of this.state.getWebSockets()) {
-        try { ws.send(msg); } catch { /* dropped */ }
-      }
-      return json(ev);
-    }
-
-    if (url.pathname === '/list') {
-      const since = parseInt(url.searchParams.get('since') || '0', 10) || 0;
-      return json({ events: this.events.filter(e => e.id > since), lastId: this.seq });
-    }
-
-    if ((request.headers.get('Upgrade') || '') === 'websocket') {
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      this.state.acceptWebSocket(server);
-      return new Response(null, { status: 101, webSocket: client });
-    }
-
-    return new Response('not found', { status: 404 });
-  }
-}

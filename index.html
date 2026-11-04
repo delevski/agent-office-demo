@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=9">
+<link rel="stylesheet" href="./styles.css?v=10">
 </head>
 <body>
 
@@ -30,13 +30,14 @@
   <div class="brand">
     <span class="brand-mark">▦</span>
     <span class="brand-name">משרד הסוכנים</span>
-    <span class="badge-demo">דמו</span>
+    <span class="badge-demo" id="badge-mode">דמו</span>
   </div>
   <div class="top-actions">
     <div class="clock" id="clock" title="שעה מקומית">--:--:--</div>
-    <button class="btn btn-gold" id="btn-meeting" type="button">☕ ישיבת בוקר</button>
-    <button class="btn" id="btn-pause" type="button" aria-pressed="false">⏸ השהה</button>
-    <button class="btn" id="btn-speed" type="button">מהירות ×1</button>
+    <button class="btn btn-gold demo-only" id="btn-meeting" type="button">☕ ישיבת בוקר</button>
+    <button class="btn demo-only" id="btn-pause" type="button" aria-pressed="false">⏸ השהה</button>
+    <button class="btn demo-only" id="btn-speed" type="button">מהירות ×1</button>
+    <button class="btn btn-login" id="btn-login" type="button">🔒 כניסה</button>
   </div>
 </header>
 
@@ -60,7 +61,7 @@
     <div class="kpis" id="kpis"></div>
     <div class="card agent-panel" id="agent-panel"></div>
     <div class="card chart-card">
-      <div class="card-head"><h3>אירועים לדקה</h3><span class="muted">30 הדקות האחרונות · דמו</span></div>
+      <div class="card-head"><h3>אירועים לדקה</h3><span class="muted" id="chart-sub">30 הדקות האחרונות · דמו</span></div>
       <canvas id="chart" height="90"></canvas>
     </div>
   </section>
@@ -70,7 +71,7 @@
     <div class="card log-card">
       <div class="card-head">
         <h3>יומן אירועים <span class="mono tag">events</span></h3>
-        <span class="muted">טבלת דמו · כל שורה מזיזה דמות</span>
+        <span class="muted" id="log-sub">טבלת דמו · כל שורה מזיזה דמות</span>
       </div>
       <div id="log" class="log" dir="ltr" aria-live="polite"></div>
     </div>
@@ -91,10 +92,27 @@
 
 <div id="toasts" aria-live="assertive"></div>
 
+<!-- Login (Ori only) -->
+<div id="login" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+  <form class="modal-card card" id="login-form" autocomplete="on">
+    <h3 id="login-title">כניסה למשרד החי</h3>
+    <p class="muted">אחרי הכניסה רואים לכל סוכן על מה הוא עובד עכשיו, כמה שימוש היה היום ומה הוא יודע לעשות.</p>
+    <input type="text" name="username" value="ori" autocomplete="username" class="hidden" aria-hidden="true" tabindex="-1">
+    <label for="login-pass">סיסמה</label>
+    <input id="login-pass" name="password" type="password" autocomplete="current-password" required dir="ltr">
+    <div id="login-err" class="login-err hidden" role="alert"></div>
+    <div class="modal-actions">
+      <button class="btn btn-gold" id="login-submit" type="submit">כניסה</button>
+      <button class="btn btn-ghost" id="login-cancel" type="button">ביטול</button>
+    </div>
+  </form>
+</div>
+
 <footer class="foot">
-  כל הנתונים, השמות והסכומים מומצאים לצורך <span class="hl">הדגמה</span> בלבד · לא נשלח ולא נחייב שום דבר אמיתי
+  <span id="foot-demo">כל הנתונים, השמות והסכומים מומצאים לצורך <span class="hl">הדגמה</span> בלבד · לא נשלח ולא נחייב שום דבר אמיתי</span>
+  <span id="foot-live" class="hidden">מצב <span class="hl">חי</span> · נתונים אמיתיים שהסוכנים מדווחים על עצמם · גלוי רק אחרי כניסה</span>
 </footer>
 
-<script type="module" src="./main.js?v=9"></script>
+<script type="module" src="./main.js?v=10"></script>
 </body>
 </html>

@@ -12,5 +12,10 @@
       "kinds": [["post.draft", "טיוטת פוסט מוכנה", "+1"], ["post.published", "פוסט פורסם", "+1"]] },
     { "id": "omer",  "name": "עומר",  "role": "סוכן פרסום",   "handle": "omer",  "color": "#5ecfd6", "skin": "#c98e63", "hair": "#24201c", "longHair": false,
       "kinds": [["ad.report", "דוח קמפיין נבנה", "+1"], ["campaign.tuned", "קמפיין כוונן", "CTR"]] }
+  ],
+  "live": [
+    { "id": "tab",      "name": "Tab",      "role": "עוזר אישי",  "handle": "tab",      "color": "#f7b84d", "skin": "#f2c9a4", "hair": "#2c2320", "longHair": false },
+    { "id": "instinct", "name": "Instinct", "role": "סוכן פיתוח", "handle": "instinct", "color": "#4dc9f7", "skin": "#e8b48c", "hair": "#1f1a16", "longHair": false },
+    { "id": "hermes",   "name": "Hermes",   "role": "סוכן אישי",  "handle": "hermes",   "color": "#c986f2", "skin": "#d9a077", "hair": "#5a3d28", "longHair": true }
   ]
 }

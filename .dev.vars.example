@@ -1,0 +1,6 @@
+# Copy to .dev.vars for `npx wrangler dev` (local only, never commit real values).
+OFFICE_PASSWORD=change-me
+SESSION_SECRET=any-long-random-string
+AGENT_TOKEN_TAB=local-tab-token
+AGENT_TOKEN_INSTINCT=local-instinct-token
+INGEST_TOKEN=local-legacy-token

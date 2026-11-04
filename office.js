@@ -252,7 +252,10 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
   let standingCount = 0;
   function addCharacter(meta) {
     const ch = makeCharacter(meta);
-    const freeIdx = deskSpots.findIndex((_, i) => !usedSpots.has(i));
+    // meta.seatIndex: share a desk with a character that is never visible at the same time
+    // (live agents sit at the desks of the hidden demo characters).
+    const shared = Number.isInteger(meta.seatIndex) && meta.seatIndex < deskSpots.length;
+    const freeIdx = shared ? meta.seatIndex : deskSpots.findIndex((_, i) => !usedSpots.has(i));
     let seat, standing;
     if (freeIdx >= 0) {
       usedSpots.add(freeIdx);
@@ -297,7 +300,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
       ptr.x = ((e.clientX - r.left) / r.width) * 2 - 1;
       ptr.y = -((e.clientY - r.top) / r.height) * 2 + 1;
       ray.setFromCamera(ptr, cam);
-      const hits = ray.intersectObjects([...agents.values()].map(a => a.hit));
+      const hits = ray.intersectObjects([...agents.values()].filter(a => a.g.visible).map(a => a.hit));
       if (hits.length) hooks.onSelect?.(hits[0].object.userData.agentId);
     }
   });
@@ -375,6 +378,11 @@ export function createOffice(canvas, agentsMeta, hooks = {}) {
   return {
     addAgent(meta) { return addCharacter(meta); },
     hasAgent(id) { return agents.has(id); },
+    setVisible(id, visible) {
+      const ch = agents.get(id); if (!ch) return;
+      ch.g.visible = !!visible;
+      if (!visible) ch.focused = false;
+    },
     setState(id, state) {
       const ch = agents.get(id); if (!ch) return;
       ch.state = state; ch.stateT = 0;
