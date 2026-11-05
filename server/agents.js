@@ -7,7 +7,7 @@ export const MAX_TASKS = 30;                       // recent tasks kept per agen
 export const USAGE_DAYS = 14;                      // daily usage history kept per agent
 export const STATUSES = ['working', 'idle', 'blocked', 'offline'];
 export const USAGE_FIELDS = ['messages', 'tokens', 'cost', 'tasks', 'calls', 'pct_of_quota'];
-const TASK_STATUSES = ['running', 'done', 'failed', 'blocked'];
+const TASK_STATUSES = ['running', 'done', 'failed', 'blocked', 'queued'];
 
 /* ---------------- sanitizers ---------------- */
 export function str(v, n) {
@@ -76,6 +76,7 @@ const KIND_ALIASES = {
   'task.started': 'task.start', 'task.begin': 'task.start',
   'task.completed': 'task.done', 'task.finished': 'task.done', 'task.ok': 'task.done',
   'task.error': 'task.failed',
+  'task.queue': 'task.queued', 'task.todo': 'task.queued', 'task.planned': 'task.queued',
 };
 export function normalizeReport(body, now = Date.now()) {
   body = body && typeof body === 'object' ? body : {};
@@ -107,8 +108,8 @@ export function normalizeReport(body, now = Date.now()) {
       const ct = cleanTask(t, now);
       if (!ct) return null;
       const res = String(t.result ?? t.status ?? 'ok');
-      ct.status = /fail|error/.test(res) ? 'failed' : /block/.test(res) ? 'blocked' : /run|progress/.test(res) ? 'running' : 'done';
-      ct.ended = ct.status === 'running' ? undefined : time(t.done_at ?? t.ended ?? t.ended_at, now);
+      ct.status = /fail|error/.test(res) ? 'failed' : /block/.test(res) ? 'blocked' : /run|progress/.test(res) ? 'running' : /queue|todo|pending|planned/.test(res) ? 'queued' : 'done';
+      ct.ended = ct.status === 'running' || ct.status === 'queued' ? undefined : time(t.done_at ?? t.ended ?? t.ended_at, now);
       return ct;
     }).filter(Boolean);
   }
@@ -132,6 +133,7 @@ export function feedNote(r) {
   if (r.kind === 'task.start') return t ? `התחיל: ${t}` : 'התחיל משימה';
   if (r.kind === 'task.done') return (r.taskStatus === 'failed' ? 'נכשל: ' : 'סיים: ') + t;
   if (r.kind === 'task.failed') return t ? `נכשל: ${t}` : 'משימה נכשלה';
+  if (r.kind === 'task.queued') return t ? `בתור: ${t}` : 'משימה נוספה לתור';
   if (r.kind === 'status') return { working: 'עובד', idle: 'פנוי', blocked: 'תקוע — מחכה למשהו', offline: 'התנתק' }[r.status] || 'עדכון סטטוס';
   return r.kind;
 }
@@ -185,6 +187,13 @@ export function applyReport(prev, r, now = Date.now()) {
         if (a.current && ((t.id && a.current.id === t.id) || (!t.id && a.current.title === t.title))) a.current = null;
       }
       if (!a.current) a.status = r.status || 'idle';
+      break;
+    }
+    case 'task.queued': { // planned work: shows in the board's "to do" column, does not change status
+      const t = r.task || { id: '', title: r.note || 'משימה', link: '', since: now };
+      if (!t.id) t.id = 'q' + now.toString(36);
+      const existing = a.tasks.find(x => x.id === t.id);
+      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued' });
       break;
     }
     case 'status': {

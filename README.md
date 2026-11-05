@@ -74,13 +74,14 @@ Strings are trimmed and stripped of markup; links must be `http(s)`.
 | --- | --- | --- |
 | `task.start` | `{"task": {"id", "title", "link"}}` | Sets *working on now*, adds the task as running |
 | `task.done` / `task.failed` | `{"task": {"id"}}` (or no task = the current one) | Marks the task done / failed, clears *now* |
+| `task.queued` | `{"task": {"id", "title", "link"}}` | Planned work: a card in the board's **לביצוע** column (aliases `task.todo`, `task.planned`). A later `task.start` with the same `id` moves it to **בעבודה** |
 | `status` | `{"status": "working\|idle\|blocked\|offline", "task": {…}}` | Sets status (and optionally *now*) |
 | `usage` | `{"usage": {"messages", "tokens", "cost", "tasks"}, "mode": "set\|add", "day": "YYYY-MM-DD"}` | Today's usage. `set` (default) = today's totals so far, safe to resend; `add` = increment. `cost` is in USD. Day = Israel time. `tasks` defaults to tasks finished today. |
 | `config` | `{"config": {"model", "skills": [], "tools": [], "description"}}` | Capabilities shown on the card (merged) |
 | anything else | `{"value", "note"}` | The original free-form event: log line + animation |
 
 `heartbeat` accepts Instinct's snapshot shape:
-`{"status", "current": {"title", "since", "ref"}, "recent": [{"title", "done_at", "result": "ok|failed"}], "usage": {...}, "capabilities": {"model", "skills", "tools"}}`.
+`{"status", "current": {"title", "since", "ref"}, "recent": [{"title", "done_at", "result": "ok|failed|queued"}], "usage": {...}, "capabilities": {"model", "skills", "tools"}}`.
 
 Report only what is fine for Ori to read: task names, status, counts and capabilities — no prompts,
 credentials or internals. `model` is whatever name the agent wants shown (Tab reports `"Tab"`).
@@ -124,6 +125,60 @@ Responses: `200 {"ok":true,…}`, `401` bad/missing token, `403` token of anothe
   PostToolUse/Stop hook: your coding agents report automatically, zero code changes.
 - `integrations/curl-example.sh` — curl for every event type (per-agent token).
 - `integrations/office-agent.js` — zero-dep JS/TS helper (`createReporter`).
+
+
+## The office (v2)
+
+The scene (`office.js`, Three.js r170, no model files or image assets — everything is generated in code):
+
+- **Camera** — isometric, eased. Pinch (phone), wheel / trackpad pinch (desktop) and the **+ / −**
+  buttons zoom towards the pointer, with limits; drag orbits within limits, right-drag / shift-drag /
+  two fingers pan; **איפוס מצלמה** resets. Keyboard: focus the scene, then `+`, `-`, `0`.
+  Tapping a character opens its panel, tapping the wall board opens the kanban, tapping the bookcase
+  opens the skills list (tested with touch taps on a 390 px phone).
+- **Room** — a diorama: walls with windows and drifting clouds, soft daylight with real window
+  shadows and light shafts, dust motes, plants, sofa and lamp, a coffee corner with steam, a wall
+  clock on real time and the events TV.
+- **Agents** — every desk monitor glows in its agent's colour and shows the agent's emblem.
+  Live status is visible at a glance: **working** = typing, code scrolling on the screen;
+  **idle** = coffee break, leaning back with a mug; **blocked** = scratching head with a "?";
+  **offline / never reported** = asleep on the desk, greyed out, screen off.
+- **Emblems** (`emblems.js`) — original badges: monogram + colour + a small icon, drawn as SVG for
+  the UI and on canvas for the 3D tags, monitors, kanban cards and shelves. Data-driven from
+  `roster.json`:
+  ```json
+  { "id": "hermes", "name": "Hermes", "color": "#c986f2", "emblem": { "mono": "He", "icon": "wing" } }
+  ```
+  Icons: `tab, spark, wing, magnet, tag, chat, coin, pen, megaphone, hex, orbit, leaf`.
+  An agent that is not in the roster gets its first letter and a deterministic icon automatically.
+- **Kanban board** — on the back wall, readable when you zoom in; **לוח משימות** (or a tap on the board)
+  opens the 2D version. Live mode shows only what agents reported: `task.queued` / `blocked` →
+  לביצוע, `task.start` → בעבודה, `task.done` / `task.failed` → הושלם (failed is marked). Demo mode
+  shows sample tasks of the demo characters, labelled דמו on the board itself.
+- **Skills shelves** — one shelf row per agent; each skill from the agent's `config.skills` is a
+  labelled box in the agent's colour. An agent that never sent `config` shows "אין נתונים".
+- **Performance** — static furniture is merged into one draw call per material (about 110 draw calls
+  for the furnished room, about 230 with nine characters), books and boxes are instanced, textures are ≤1024 px on phones
+  (board 1536 px on desktop), pixel ratio is capped (1.5 phone / 2 desktop) and drops automatically,
+  then soft shadows switch off, if a phone can't hold ~30 fps. The render loop pauses in background
+  tabs. `prefers-reduced-motion` turns off camera easing, particles and the showcase orbit.
+
+## Showcase (embed on a website)
+
+`/showcase` (or `/?showcase=1`) renders the office **in demo mode only** — fictional characters and
+sample tasks, no login UI, and it never calls the private API — with a slow cinematic camera loop.
+
+```html
+<iframe src="https://agent-office-demo.orworkdelevski.workers.dev/showcase"
+        title="Agent Office" loading="lazy"
+        style="width:100%;aspect-ratio:16/9;border:0;border-radius:20px;overflow:hidden"
+        allow="fullscreen"></iframe>
+```
+
+Options (query string): `bg=transparent` (no background — place it over your own section),
+`bg=light` (cream background), default brand-dark; `loop=12` (camera loop length in seconds).
+The `/showcase` route sends `Content-Security-Policy: frame-ancestors *` so any site can embed it.
+`capture=1` steps the scene frame by frame from `window.__office.step(dt)` for video export.
 
 ## Stack
 
