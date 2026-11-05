@@ -12,6 +12,8 @@
 //   GET  /api/changes[?day=YYYY-MM-DD] (session) what changed today: merged PRs, deploys, closed tasks
 //   GET  /api/replay[?day=YYYY-MM-DD]  (session) the day's reports + a start-of-day snapshot, for the replay
 //   GET  /api/summary[?since=ISO|ms][&format=text] (session OR any agent token) the overnight digest
+//   POST /api/tasks {title, agent, note}  (session) "give a task": adds a card to that agent's to-do column.
+//                                          It is only a card on the board; no agent is called or notified.
 //   GET  /api/ws                     (session) WebSocket live stream
 //   GET  /showcase                   public, embeddable demo-only view (same page, ?showcase mode)
 //   everything else                  -> static assets (the site; demo mode needs no login)
@@ -22,6 +24,7 @@ import {
 } from './server/auth.js';
 
 export { EventHub } from './server/hub.js';
+import { parseAssign } from './insights.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -110,6 +113,26 @@ export default {
       qs.set('known', tokenAgents(env).join(','));
       const res = await hub(env).fetch('https://hub/summary?' + qs.toString());
       return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/json', 'Cache-Control': 'no-store' } });
+    }
+
+    /* ---- "give a task": Ori only; writes a queued card, calls nobody ---- */
+    if (path === '/api/tasks' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      let body = null;
+      try { body = await request.json(); } catch { body = null; }
+      const { task, errors } = parseAssign(body, tokenAgents(env));
+      if (errors.length) return privateJson({ ok: false, error: 'invalid task', details: errors }, 400);
+      const now = Date.now();
+      const r = {
+        agent: task.agent, name: '', kind: 'task.queued', value: '', note: `משימה חדשה בלוח: ${task.title}`, ts: now,
+        task: { id: 'm' + now.toString(36), title: task.title, link: '', since: now },
+        assigned: { note: task.note },
+      };
+      const res = await hub(env).fetch('https://hub/report', { method: 'POST', body: JSON.stringify(r) });
+      if (!res.ok) return privateJson({ ok: false, error: 'could not add the task' }, 502);
+      return privateJson({ ok: true, task: { id: r.task.id, title: task.title, agent: task.agent, note: task.note, status: 'queued' } });
     }
 
     /* ---- private reads: Ori only ---- */

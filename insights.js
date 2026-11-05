@@ -256,3 +256,58 @@ export function dayBounds(day) {
   const [y, m, d] = day.split('-').map(Number);
   return [zoneTime(y, m, d), zoneTime(y, m, d + 1)];
 }
+
+
+/* ---------------- C1. reliability score ---------------- */
+// Three parts, all from data the office already has. 100 = every task done, never stuck, review findings falling.
+export const RELIABILITY = {
+  success: 60,   // share of finished tasks (7 days) that were done rather than failed
+  stability: 25, // minus 8 for every stuck incident in 7 days (an open task silent for more than ALERT_AFTER_MIN)
+  quality: 15,   // the agent's own PRs: findings per PR falling (first PRs vs latest) earns all of it, rising earns none
+  stuckPenalty: 8,
+};
+/**
+ * view: the agent's public view (history7, incidents7, incidentFor, taskUpdated, alert or computed alert);
+ * trend: this agent's entry from reviewTrend() as the PR author, or null.
+ * Returns {score, label, level, parts[], tasks, lowData}.
+ */
+export function reliability(view, trend = null, alert = null) {
+  const R = RELIABILITY;
+  const h = view?.history7 || [];
+  const done = h.reduce((s, d) => s + (d.done || 0), 0), failed = h.reduce((s, d) => s + (d.failed || 0), 0);
+  const n = done + failed;
+  const success = n ? R.success * done / n : R.success * 0.75;
+  let incidents = view?.incidents7 || 0;
+  if (alert?.kind === 'stuck' && view?.incidentFor !== (view?.taskUpdated || view?.lastSeen)) incidents += 1; // stuck right now, not yet counted
+  const stability = Math.max(0, R.stability - R.stuckPenalty * incidents);
+  let quality = R.quality / 2, qualityDetail = 'אין עדיין ביקורות על PRs של הסוכן';
+  if (trend && trend.points?.length >= 2 && trend.change !== null && trend.change !== undefined) {
+    const c = Math.max(-1, Math.min(1, trend.change)); // change is a fraction: -1 = findings went to zero, +1 = doubled or worse
+    quality = R.quality * (1 - c) / 2;
+    qualityDetail = trend.last < trend.first ? `ממצאים לכל PR ירדו מ-${trend.first} ל-${trend.last}` : trend.last > trend.first ? `ממצאים לכל PR עלו מ-${trend.first} ל-${trend.last}` : `ממצאים לכל PR נשארו ${trend.last}`;
+  } else if (trend && trend.points?.length === 1) qualityDetail = 'PR אחד בלבד עם ביקורת, עוד אין מגמה';
+  const score = Math.round(success + stability + quality);
+  const level = score >= 85 ? 'great' : score >= 70 ? 'good' : score >= 50 ? 'fair' : 'low';
+  const label = { great: 'אמין מאוד', good: 'יציב', fair: 'בינוני', low: 'דורש תשומת לב' }[level];
+  return {
+    score, level, label, tasks: n, lowData: n < 3,
+    parts: [
+      { key: 'success', label: 'הצלחה', points: Math.round(success), max: R.success, detail: n ? `${done} הושלמו, ${failed} נכשלו ב-7 ימים` : 'אין משימות שהסתיימו ב-7 ימים (ניטרלי)' },
+      { key: 'stability', label: 'יציבות', points: Math.round(stability), max: R.stability, detail: incidents ? `${incidents} פעמים תקוע ב-7 ימים (−${R.stuckPenalty} לכל אחת)` : 'לא נתקע ב-7 ימים' },
+      { key: 'quality', label: 'איכות קוד', points: Math.round(quality), max: R.quality, detail: qualityDetail },
+    ],
+  };
+}
+
+/* ---------------- C2. "give a task" (a board card only) ---------------- */
+/** Validate the office's own "give a task" form. Returns {task:{title, agent, note}, errors[]}. */
+export function parseAssign(body, knownAgents = []) {
+  const errors = [];
+  const title = typeof body?.title === 'string' ? body.title.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
+  const agent = typeof body?.agent === 'string' ? body.agent.trim().toLowerCase() : '';
+  const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 300) : '';
+  if (!title) errors.push('title: required');
+  if (!agent) errors.push('agent: required');
+  else if (knownAgents.length && !knownAgents.includes(agent)) errors.push('agent: unknown agent');
+  return { task: { title, agent, note }, errors };
+}

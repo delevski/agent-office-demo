@@ -2,7 +2,7 @@
 // The Durable Object (worker.js -> server/hub.js) keeps one state object per agent and runs every
 // accepted report through applyReport(). The browser runs the same reducer to replay a day.
 // Kept pure so it is unit-tested with `node --test`.
-import { agentAlert, dayOf, history7, SEVERITIES, budgetMeter, BUDGET_FIELDS } from './insights.js';
+import { agentAlert, dayOf, history7, lastDays, SEVERITIES, budgetMeter, BUDGET_FIELDS, ALERT_AFTER_MS } from './insights.js';
 export { dayOf, ALERT_AFTER_MS, ALERT_AFTER_MIN } from './insights.js';
 
 export const OFFLINE_AFTER_MS = 10 * 60 * 1000;   // no report for 10 min -> shown as offline
@@ -336,6 +336,16 @@ export function applyReport(prev, r, now = Date.now()) {
   // heartbeat recent[] items without an id get a synthetic one; never count the same finished title twice a day
   const seenFinished = new Set((a.tasks || []).filter(t => t.ended).map(t => `${t.status}|${t.title}|${dayOf(t.ended)}`));
   const currentBefore = a.current?.id || a.current?.title || null;
+  // reliability: an open task that went quiet past the alert threshold is one "stuck" incident, counted once
+  // (when the agent is next heard from, or by the browser while it is still stuck)
+  const staleFrom = prev?.current ? (prev.taskUpdated || prev.lastSeen || 0) : 0;
+  if (staleFrom && now - staleFrom > ALERT_AFTER_MS && a.incidentFor !== staleFrom && prev.status !== 'offline') {
+    a.incidents = { ...(a.incidents || {}) };
+    const d = dayOf(now);
+    a.incidents[d] = (a.incidents[d] || 0) + 1;
+    a.incidentFor = staleFrom;
+    for (const k of Object.keys(a.incidents)) if (k < dayOf(now - 30 * 86400_000)) delete a.incidents[k];
+  }
   a.lastSeen = now;
   if (r.kind === 'heartbeat') a.lastHeartbeat = now;
   if (r.name) a.name = r.name;
@@ -366,7 +376,8 @@ export function applyReport(prev, r, now = Date.now()) {
       const t = r.task || { id: '', title: r.note || 'משימה', link: '', since: now };
       if (!t.id) t.id = 'q' + now.toString(36);
       const existing = a.tasks.find(x => x.id === t.id);
-      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued' });
+      // r.assigned is set only by the office itself (the "give a task" button), never parsed from an agent's report
+      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued', ...(r.assigned ? { assigned: true, note: r.assigned.note || '' } : {}) });
       break;
     }
     case 'status': {
@@ -465,6 +476,8 @@ export function publicView(a, now = Date.now()) {
     lastHeartbeat: a.lastHeartbeat || null,
     history7: history7(a.daily, a.tasks, now),
     activity: a.activity && !offline ? a.activity : null,
+    incidents7: lastDays(now).reduce((s, d) => s + (a.incidents?.[d] || 0), 0),
+    incidentFor: a.incidentFor || 0,
     budget: a.config?.budget || null,
   };
   view.meter = budgetMeter(view.usageToday, view.budget);

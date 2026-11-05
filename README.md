@@ -67,6 +67,7 @@ under `tab`, and naming another agent in the body returns `403`.
 | `GET /api/reviews[?author=id]` | session cookie | Code reviews (newest last, up to 200) |
 | `GET /api/changes[?day=YYYY-MM-DD]` | session cookie | What changed today: merged PRs, deploys, closed tasks (newest first; day = Israel time) |
 | `GET /api/replay[?day=YYYY-MM-DD]` | session cookie | The day's stored reports plus a start-of-day snapshot, which the day replay plays back (the last 3 days are kept) |
+| `POST /api/tasks` `{title, agent, note}` | session cookie | "Give a task": adds a card to that agent's **to do** column. Only a card: no agent is called or notified |
 | `GET /api/summary[?since=ISO\|ms][&format=text]` | session cookie **or** any agent token | Morning summary: what happened since `since` (default: 18:00 yesterday, Israel time), as JSON with a `text` digest, or plain text |
 
 ### Event types (`POST /api/ingest`)
@@ -161,6 +162,24 @@ curl -s "$URL/api/summary?since=2026-11-04T18:00:00%2B02:00" -H "Authorization: 
 - **Meeting room.** When two or more agents are working at the same time on the same GitHub PR, they get up and sit together at the round table in the lounge. A matching repo link counts too, e.g. a reviewer and an author whose current `task.link` is the same PR.
   - Their tags read "👥 PR #120", and a toast says who moved.
   - They go back to their desks when one of them moves on.
+
+### v5: reliability score and "give a task"
+
+- **Reliability score** (0–100, on the agent card under **אמינות**). It is built only from events agents already send:
+  - **Success, 60 pts:** the share of tasks finished in the last 7 days that were done rather than failed. If none finished, the agent gets 45, which is neutral.
+  - **Stability, 25 pts:** −8 for every time the agent got stuck in 7 days, meaning an open task with no update for more than `ALERT_AFTER_MIN`.
+    - Each silence counts once.
+    - An agent that is stuck right now counts immediately.
+  - **Code quality, 15 pts:** the findings-per-PR trend from reviews of the agent's own PRs.
+    - Fully falling earns 15, flat earns 7.5, rising earns less.
+    - With no reviews, the agent gets 7.5.
+  - Labels: 85+ אמין מאוד · 70+ יציב · 50+ בינוני · below that דורש תשומת לב.
+  - The card has an "איך זה מחושב?" explanation. The weights are `RELIABILITY` in `insights.js`.
+- **Give a task** (**➕ משימה חדשה** on the task board, live mode): a title, an agent and an optional note.
+  - It adds a card to that agent's **to do** column, marked ✍️ ידני.
+  - That is all it does. No agent is called, messaged or triggered.
+  - When an agent later reports `task.start` with the same `task.id`, the card moves to **in progress** like any other.
+  - API: `POST /api/tasks` (session only, same-origin).
 
 Report only what is fine for Ori to read: task names, status, counts and capabilities — no prompts,
 credentials or internals. `model` is whatever name the agent wants shown (Tab reports `"Tab"`).
