@@ -134,3 +134,27 @@ test('per-agent bearer tokens decide the agent; legacy token stays valid', () =>
   assert.deepEqual(writerFor(req({}), env), { ok: false });
   assert.deepEqual(tokenAgents(env).sort(), ['instinct', 'tab']);
 });
+
+test('task.queued puts planned work in the "to do" column without changing status', () => {
+  const { a, t } = run([
+    { agent: 'nova', kind: 'task.start', task: { id: 'n1', title: 'Research' } },
+    { agent: 'nova', kind: 'task.queued', task: { id: 'n2', title: 'Translate the deck' } },
+    { agent: 'nova', kind: 'task.todo', task: { id: 'n3', title: 'Alias works too' } },
+  ]);
+  assert.equal(a.status, 'working');
+  assert.equal(a.current.id, 'n1');
+  assert.deepEqual(a.tasks.filter(x => x.status === 'queued').map(x => x.id).sort(), ['n2', 'n3']);
+  // starting a queued task moves it to running
+  const b = applyReport(a, normalizeReport({ agent: 'nova', kind: 'task.start', task: { id: 'n2', title: 'Translate the deck' } }, t + 1000), t + 1000);
+  assert.equal(b.tasks.find(x => x.id === 'n2').status, 'running');
+  // a late task.queued never demotes a running/done task
+  const c = applyReport(b, normalizeReport({ agent: 'nova', kind: 'task.queued', task: { id: 'n2', title: 'Translate the deck' } }, t + 2000), t + 2000);
+  assert.equal(c.tasks.find(x => x.id === 'n2').status, 'running');
+});
+
+test('heartbeat recent[] understands queued results', () => {
+  const { a } = run([{ agent: 'nova', kind: 'heartbeat', status: 'idle', recent: [{ id: 'q1', title: 'Later', result: 'queued' }, { id: 'd1', title: 'Done', result: 'ok' }] }]);
+  assert.equal(a.tasks.find(x => x.id === 'q1').status, 'queued');
+  assert.equal(a.tasks.find(x => x.id === 'q1').ended, undefined);
+  assert.equal(a.tasks.find(x => x.id === 'd1').status, 'done');
+});

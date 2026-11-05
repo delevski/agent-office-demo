@@ -9,6 +9,7 @@
 //   GET  /api/agents/:id             (session) one agent
 //   GET  /api/events?since=N         (session) polling fallback / catch-up
 //   GET  /api/ws                     (session) WebSocket live stream
+//   GET  /showcase                   public, embeddable demo-only view (same page, ?showcase mode)
 //   everything else                  -> static assets (the site; demo mode needs no login)
 
 import { normalizeReport, agentId } from './server/agents.js';
@@ -116,6 +117,16 @@ export default {
         return hub(env).fetch(request);
       }
       return privateJson({ ok: false, error: 'not found' }, 404);
+    }
+
+    /* ---- public showcase: the same page in demo-only mode, embeddable in an iframe ---- */
+    if (path === '/showcase' || path === '/showcase/') {
+      const res = await env.ASSETS.fetch(new Request(new URL('/', url), request));
+      const headers = new Headers(res.headers);
+      headers.set('Content-Security-Policy', 'frame-ancestors *');
+      headers.delete('X-Frame-Options');
+      headers.set('Cache-Control', 'public, max-age=300');
+      return new Response(res.body, { status: res.status, headers });
     }
 
     return env.ASSETS.fetch(request);

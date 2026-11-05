@@ -1,6 +1,18 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=11';
+import { createOffice } from './office.js?v=20';
+import { emblemSVG } from './emblems.js';
+
+/* ---------------- page modes ---------------- */
+// /showcase or ?showcase=1 : public, embeddable, demo-only view (never calls the private API).
+const QS = new URLSearchParams(location.search);
+const SHOWCASE = QS.has('showcase') || /^\/showcase\/?$/.test(location.pathname);
+const CAPTURE = QS.get('capture') === '1';             // deterministic frame stepping (video export)
+if (SHOWCASE) {
+  document.body.classList.add('showcase');
+  if (QS.get('bg') === 'transparent') document.body.classList.add('bg-transparent');
+  if (QS.get('bg') === 'light') document.body.classList.add('bg-light');
+}
 
 /* ---------------- roster: data-driven, fetched from roster.json ---------------- */
 const FALLBACK_ROSTER = { agents: [
@@ -47,7 +59,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=11');
+    const r = await fetch('./roster.json?v=20');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -67,14 +79,24 @@ async function boot() {
     const doc = await loadRoster();
     AGENTS = doc.agents;
     bootSet(55, 'בונה את המשרד…');
-    office = createOffice($('#scene'), AGENTS, { onSelect: id => selectAgent(id, true) });
-    (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
+    // canvas textures (name tags, board, shelves) need the Hebrew webfont before they are drawn
+    try { await Promise.race([Promise.all(['800 40px Heebo', '900 40px Heebo', '600 28px Heebo'].map(f => document.fonts.load(f))), delay(2500)]); } catch { /* fallback font */ }
+    office = createOffice($('#scene'), AGENTS, {
+      onSelect: id => { if (!SHOWCASE) selectAgent(id, true); },
+      onBoard: () => { if (!SHOWCASE) openBoard(); },
+      onShelf: () => { if (!SHOWCASE) openShelves(); },
+      onFrame: simFrame,
+    }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12 });
+    window.__office = office;
+    if (!SHOWCASE) (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
+    initDemoBoard();
     bootSet(85, 'בודק כניסה…');
-    await checkAuth();
+    if (!SHOWCASE) await checkAuth();
     bootSet(100, 'מוכן!');
-    setTimeout(() => $('#boot').classList.add('hidden'), 250);
+    setTimeout(() => $('#boot').classList.add('hidden'), SHOWCASE ? 0 : 250);
     if (auth.loggedIn) enterLiveMode({ quiet: true });
     else startSim();
+    refreshWorld(true);
   } catch (e) {
     console.error(e);
     bootStep.textContent = 'שגיאה בטעינה';
@@ -85,6 +107,7 @@ $('#boot-retry').addEventListener('click', boot);
 
 /* ---------------- busy wrapper + toasts ---------------- */
 function toast(msg, { err = false, retry = null } = {}) {
+  if (SHOWCASE) return;
   const el = document.createElement('div');
   el.className = 'toast' + (err ? ' err' : '');
   const span = document.createElement('span'); span.textContent = msg;
@@ -157,6 +180,7 @@ function enterLiveMode({ quiet = false } = {}) {
   lastId = 0;
   loadAgents().then(() => pollEvents(true));
   connectLive();
+  refreshWorld(true);
   if (!quiet) toast('⚡ מצב חי — הסוכנים האמיתיים שלך');
 }
 function enterDemoMode() {
@@ -166,6 +190,7 @@ function enterDemoMode() {
   resetBoard();
   scheduleNext();
   setPill();
+  refreshWorld(true);
   toast('חזרנו למצב דמו (סימולציה)');
 }
 $('#live-pill').addEventListener('click', () => {
@@ -246,7 +271,7 @@ function panelHtml(a) {
   const tag = a.live ? 'חי' : 'דמו';
   return `
     <div class="ap-head">
-      <div class="ap-avatar" style="background:${a.color}">${(a.name || '?')[0]}</div>
+      <span class="ap-emblem">${emblemSVG(a, 46)}</span>
       <div><div class="ap-name">${a.name}</div><div class="ap-role">${a.role} · ${tag}</div></div>
     </div>
     <div class="ap-status"><span class="dot" style="background:${a.color}"></span><span>${STATE_HE[st.state] || st.state}</span></div>
@@ -290,7 +315,7 @@ function renderPanelDefault() {
       if (a.live) return liveListItem(a);
       const st = statOf(a.id);
       return `<div class="ag-item" data-id="${a.id}">
-        <div class="ap-avatar" style="background:${a.color};width:34px;height:34px;font-size:.9rem">${(a.name || '?')[0]}</div>
+        <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
         <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ⚡' : ''}</span></div>
         <div class="ag-last">${st.last}</div></div>
         <span class="mono muted">${st.events}</span>
@@ -349,14 +374,14 @@ function applyEventToOffice(a, kind, val, he) {
   const st = statOf(a.id);
   st.events++; st.last = he || kind;
   if (mode === 'demo') bumpKpisForKind(kind, val);
-  if (/deal|payment|won|closed|task\.done/.test(kind) && Math.random() < 0.9) office.celebrate(a.id);
-  else if (Math.random() < 0.22) {
-    office.walkTo(a.id, { x: -6.8, y: 0, z: 3.4 });
-    st.state = 'walk';
-    setTimeout(() => { office.goHome(a.id); st.state = 'typing'; refreshAgentViews(a); }, 2600);
-  } else office.setState(a.id, 'typing');
+  if (/deal|payment|won|closed|task\.done|published/.test(kind) && Math.random() < 0.9) office.celebrate(a.id);
+  else if (mode === 'demo' && Math.random() < 0.12) {
+    if (office.coffeeBreak(a.id, 3 + Math.random() * 3)) st.state = 'walk';
+  } else if (mode === 'demo') office.setState(a.id, 'typing');
+  if (mode === 'demo') demoTaskStep(a, kind);
   refreshAgentViews(a);
   updateWallScreen();
+  refreshWorld();
 }
 
 /* ---------------- live channel: WebSocket + polling fallback (Ori only) ---------------- */
@@ -424,6 +449,7 @@ function onLiveEvent(ev) {
 }
 
 const SCENE_STATE = { working: 'typing', idle: 'idle', blocked: 'idle', offline: 'idle' };
+function sceneStatus(view) { return !view || !view.hasData ? 'offline' : (['working', 'idle', 'blocked', 'offline'].includes(view.status) ? view.status : 'idle'); }
 function onAgentUpdate(view, { quiet = false } = {}) {
   if (!view || !view.id) return;
   const a = liveAgentFor(view.id, view.name);
@@ -432,7 +458,8 @@ function onAgentUpdate(view, { quiet = false } = {}) {
   st.state = SCENE_STATE[view.status] || 'typing';
   st.events = Math.max(st.events, view.events || 0);
   if (view.current?.title) st.last = view.current.title;
-  if (mode === 'live') office.setState(a.id, st.state);
+  office.setStatus(a.id, sceneStatus(view));
+  refreshWorld();
   if (quiet || mode !== 'live') return;
   renderKpis();
   refreshAgentViews(a);
@@ -447,6 +474,7 @@ function addLiveCharacter(meta) {
   meta.seatIndex = LIVE.length < 6 ? LIVE.length : undefined; // sit at a hidden demo desk
   LIVE.push(meta);
   office.addAgent(meta);
+  office.setStatus(meta.id, sceneStatus(liveState.get(meta.id)));
   office.setVisible(meta.id, mode === 'live');
   statOf(meta.id);
   return meta;
@@ -472,8 +500,8 @@ function createLiveAgent(handle, name) {
 
 /* ---------------- live agent panel ---------------- */
 const STATUS_HE = { working: 'עובד עכשיו', idle: 'פנוי', blocked: 'תקוע · ממתין', offline: 'לא מחובר' };
-const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔' };
-const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע' };
+const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔', queued: '🗂️' };
+const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור' };
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -508,7 +536,7 @@ function liveListItem(a) {
   const st = statusOf(v);
   const line = st === 'nodata' ? 'אין נתונים עדיין' : v.current?.title ? v.current.title : (STATUS_HE[st] + (v.lastSeen ? ' · ' + ago(v.lastSeen) : ''));
   return `<div class="ag-item" data-id="${esc(a.id)}" role="button" tabindex="0">
-    <div class="ap-avatar" style="background:${a.color};width:34px;height:34px;font-size:.9rem">${esc((a.name || '?')[0])}</div>
+    <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
     <div class="grow"><div style="font-weight:800;font-size:.88rem">${esc(a.name)} · <span class="muted">${esc(a.role)}</span></div>
     <div class="ag-last">${esc(line)}</div></div>
     <span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>
@@ -523,7 +551,7 @@ function livePanelHtml(a) {
   const head = `
     <div class="ap-top"><button class="btn btn-ghost ap-back" id="ap-back" type="button">→ כל הסוכנים</button></div>
     <div class="ap-head">
-      <div class="ap-avatar" style="background:${a.color}">${esc((a.name || '?')[0])}</div>
+      <span class="ap-emblem">${emblemSVG(a, 46)}</span>
       <div class="grow"><div class="ap-name">${esc(a.name)}</div><div class="ap-role">${esc(a.role)} · חי</div></div>
       <span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>
     </div>`;
@@ -657,17 +685,32 @@ function fireEvent() {
   applyEventToOffice(a, kind, markerVal(marker), he);
 }
 
+// The simulation runs on the 3D scene's clock (office onFrame), so it pauses with the tab,
+// honours the speed button, and steps deterministically when frames are captured for video.
+let simClock = 0, simNext = Infinity, nextCoffee = 6;
+const simJobs = [];
+function simAfter(sec, fn) { simJobs.push({ at: simClock + sec, fn }); }
+function simFrame(dt) {
+  if (mode !== 'demo' || paused) return;
+  simClock += dt * speed;
+  for (let i = simJobs.length - 1; i >= 0; i--) if (simJobs[i].at <= simClock) simJobs.splice(i, 1)[0].fn();
+  if (simClock >= simNext) { fireEvent(); simNext = simClock + rnd(1800, 4200) / 1000; }
+  if (simClock >= nextCoffee && !meetingActive) { // ambient life: someone grabs a coffee
+    nextCoffee = simClock + 7 + Math.random() * 6;
+    const a = AGENTS[rnd(0, AGENTS.length - 1)];
+    if (a && office.coffeeBreak(a.id, 4 + Math.random() * 3)) statOf(a.id).state = 'walk';
+  }
+}
 function scheduleNext() {
   clearTimeout(simTimer);
   if (paused || mode !== 'demo') return;
-  simTimer = setTimeout(() => { fireEvent(); scheduleNext(); }, rnd(1800, 4200) / speed);
+  simNext = simClock + rnd(1800, 4200) / 1000;
 }
 function startSim() {
   updateWallScreen();
-  let burst = 0;
-  const b = setInterval(() => { fireEvent(); if (++burst >= 5) clearInterval(b); }, 450);
-  setTimeout(scheduleNext, 3000);
-  setTimeout(() => { if (!meetingDone && !paused && mode === 'demo') startMeeting(true); }, 18000);
+  for (let i = 0; i < 5; i++) simAfter(0.45 * (i + 1), fireEvent);
+  simNext = simClock + 3;
+  if (!SHOWCASE) simAfter(18, () => { if (!meetingDone && !paused && mode === 'demo') startMeeting(true); });
 }
 
 /* ---------------- controls ---------------- */
@@ -699,13 +742,13 @@ function startMeeting(auto = false) {
   office.gatherAll();
   AGENTS.forEach(a => { statOf(a.id).state = 'meeting'; });
   renderPanelDefault();
-  setTimeout(() => {
+  simAfter(7, () => {
     office.disperseAll();
     AGENTS.forEach(a => { statOf(a.id).state = 'typing'; });
     meetingActive = false;
     toast('ישיבת הבוקר הסתיימה — חזרו לעבוד 💪');
     if (selectedId) renderPanel(findAgent(selectedId));
-  }, 7000);
+  });
 }
 $('#btn-meeting').addEventListener('click', e => {
   const btn = e.currentTarget;
@@ -723,6 +766,135 @@ $('#btn-resetcam').addEventListener('click', e => {
   });
 });
 $('#scene-retry').addEventListener('click', () => location.reload());
+
+/* ---------------- the world: kanban board + skills shelves (3D + readable 2D overlays) ---------------- */
+// Demo board: each demo character works through its own clearly-labelled sample tasks.
+const demoBoard = new Map(); // id -> {todo:[], doing:null, done:[{title, ended}]}
+function initDemoBoard() {
+  const now = Date.now();
+  AGENTS.forEach((a, i) => {
+    const t = (a.demoTasks || []).slice();
+    if (!t.length) return;
+    demoBoard.set(a.id, {
+      doing: t[0] || null,
+      todo: t.slice(1, i % 2 ? 3 : 2),
+      done: t.slice(i % 2 ? 3 : 2).map((title, k) => ({ title, ended: now - (k + 1 + i) * 9 * 60_000 })),
+    });
+  });
+}
+function demoTaskStep(a, kind) {
+  const b = demoBoard.get(a.id); if (!b || Math.random() > 0.42) return;
+  if (b.doing) { b.done.unshift({ title: b.doing, ended: Date.now() }); b.done.length = Math.min(b.done.length, 4); }
+  const pool = (a.demoTasks || []);
+  b.doing = b.todo.shift() || null;
+  if (b.todo.length < 2) { // recycle a finished sample task back into the queue
+    const recycled = pool.find(t => t !== b.doing && !b.todo.includes(t));
+    if (recycled) b.todo.push(recycled);
+  }
+}
+function boardData() {
+  if (mode === 'demo') {
+    const cols = { todo: [], doing: [], done: [] };
+    for (const a of AGENTS) {
+      const b = demoBoard.get(a.id); if (!b) continue;
+      b.todo.forEach(title => cols.todo.push({ title, agent: a, status: 'queued' }));
+      if (b.doing) cols.doing.push({ title: b.doing, agent: a, status: 'running', when: 'עכשיו' });
+      b.done.forEach(d => cols.done.push({ title: d.title, agent: a, status: 'done', ts: d.ended, when: when(d.ended) }));
+    }
+    cols.done.sort((x, y) => y.ts - x.ts);
+    return { demo: true, columns: cols, updated: Date.now() };
+  }
+  // live: only what the agents reported (task.start / task.done / task.failed / task.queued)
+  const cols = { todo: [], doing: [], done: [] };
+  for (const a of LIVE) {
+    const v = liveState.get(a.id);
+    for (const t of v?.tasks || []) {
+      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0 };
+      card.when = card.ts ? when(card.ts) : '';
+      if (t.status === 'running') cols.doing.push(card);
+      else if (t.status === 'queued' || t.status === 'blocked') cols.todo.push(card);
+      else cols.done.push(card);
+    }
+  }
+  for (const k of Object.keys(cols)) cols[k].sort((x, y) => y.ts - x.ts);
+  cols.done = cols.done.slice(0, 20);
+  return { demo: false, columns: cols, updated: Date.now(),
+    empty: { todo: 'אין משימות בתור', doing: 'אף סוכן לא עובד כרגע', done: 'עוד לא דווחו משימות' } };
+}
+function shelfRows() {
+  if (mode === 'demo') return AGENTS.slice(0, 6).map(a => ({ meta: a, skills: a.skills || [], demo: true, nodata: !(a.skills || []).length }));
+  return LIVE.slice(0, 6).map(a => {
+    const skills = liveState.get(a.id)?.config?.skills || [];
+    return { meta: a, skills, demo: false, nodata: !skills.length };
+  });
+}
+let worldTimer = null, lastShelfSig = '', lastBoardSig = '';
+function refreshWorld(now = false) {
+  if (!office) return;
+  if (!now) { if (!worldTimer) worldTimer = setTimeout(() => { worldTimer = null; refreshWorld(true); }, 400); return; }
+  const bd = boardData();
+  const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status))]);
+  if (sig !== lastBoardSig) { lastBoardSig = sig; office.updateBoard(bd); if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); }
+  const rows = shelfRows();
+  const ssig = JSON.stringify(rows.map(r => [r.meta.id, r.skills, r.nodata]));
+  if (ssig !== lastShelfSig) { lastShelfSig = ssig; office.updateShelves(rows); if (!$('#shelf-ov').classList.contains('hidden')) renderShelfOverlay(); }
+}
+
+let lastFocus = null, overlayOpenedAt = 0;
+function openOverlay(id) {
+  lastFocus = document.activeElement;
+  overlayOpenedAt = performance.now();
+  const el = $(id); el.classList.remove('hidden');
+  setTimeout(() => el.querySelector('.ov-close')?.focus(), 30);
+}
+function closeOverlay(id) { $(id).classList.add('hidden'); lastFocus?.focus?.(); }
+function openBoard() { renderBoardOverlay(); openOverlay('#board-ov'); }
+function openShelves() { renderShelfOverlay(); openOverlay('#shelf-ov'); }
+function renderBoardOverlay() {
+  const bd = boardData();
+  $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות שהסוכנים דיווחו על עצמם';
+  const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
+  $('#board-ov-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
+    const list = bd.columns[k];
+    return `<section class="kb-col kb-${k}" aria-label="${names[k]}">
+      <h4><span class="kb-dot"></span>${names[k]} <span class="kb-count">${list.length}</span></h4>
+      ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
+        <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
+        <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
+        <div class="kb-meta">${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : ''}${c.when ? ' · ' + esc(c.when) : ''}</div></div>
+      </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
+    </section>`;
+  }).join('');
+}
+function renderShelfOverlay() {
+  const rows = shelfRows();
+  $('#shelf-ov-sub').textContent = mode === 'demo' ? 'דמו · סקילים לדוגמה של דמויות הדמו' : 'חי · היכולות שכל סוכן דיווח (config)';
+  $('#shelf-ov-list').innerHTML = rows.map(r => `<section class="sh-row" style="--ac:${esc(r.meta.color)}">
+      <div class="sh-head"><span class="ap-emblem">${emblemSVG(r.meta, 40, { title: false })}</span>
+        <div><div class="sh-name">${esc(r.meta.name)}</div><div class="muted">${esc(r.meta.role || '')}</div></div>
+        <span class="sh-count">${r.nodata ? '' : r.skills.length + ' סקילים'}</span></div>
+      ${r.nodata ? `<div class="ap-empty-line">${r.demo ? 'אין סקילים לדמות הזו' : 'עוד לא דיווח על הסקילים שלו'}</div>`
+        : `<div class="chips">${r.skills.map(s => `<span class="chip sh-chip">${esc(s)}</span>`).join('')}</div>`}
+      ${!r.demo && liveState.get(r.meta.id)?.config?.tools?.length ? `<div class="ap-sub">כלים</div><div class="chips chips-tools">${liveState.get(r.meta.id).config.tools.map(s => `<span class="chip">${esc(s)}</span>`).join('')}</div>` : ''}
+    </section>`).join('');
+}
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => closeOverlay(b.dataset.close)));
+// backdrop tap closes — but not the synthetic click of the very tap that opened it from the 3D scene
+document.querySelectorAll('.overlay').forEach(ov => ov.addEventListener('click', e => { if (e.target === ov && performance.now() - overlayOpenedAt > 450) closeOverlay('#' + ov.id); }));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.overlay:not(.hidden)').forEach(ov => closeOverlay('#' + ov.id));
+});
+$('#btn-board').addEventListener('click', () => { office?.focusBoard(); openBoard(); });
+$('#btn-shelves').addEventListener('click', () => { office?.focusShelf(); openShelves(); });
+$('#btn-zoomin').addEventListener('click', () => office?.zoomBy(0.75));
+$('#btn-zoomout').addEventListener('click', () => office?.zoomBy(1.33));
+document.addEventListener('keydown', e => { if (e.key === 'Tab') document.body.classList.add('kbd'); });
+document.addEventListener('pointerdown', () => document.body.classList.remove('kbd'));
+$('#scene').addEventListener('keydown', e => {
+  if (e.key === '+' || e.key === '=') { office?.zoomBy(0.8); e.preventDefault(); }
+  else if (e.key === '-' || e.key === '_') { office?.zoomBy(1.25); e.preventDefault(); }
+  else if (e.key === '0') { office?.resetCam(); e.preventDefault(); }
+});
 
 /* ---------------- mobile tabs ---------------- */
 function switchView(id) {

@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=10">
+<link rel="stylesheet" href="./styles.css?v=20">
+<meta name="theme-color" content="#14110c">
 </head>
 <body>
 
@@ -45,10 +46,18 @@
   <!-- 3D scene -->
   <section id="view-scene" class="view">
     <div class="scene-card card">
-      <canvas id="scene" aria-label="סצנת משרד תלת־ממדית"></canvas>
+      <canvas id="scene" tabindex="0" aria-label="סצנת משרד תלת־ממדית. מקשי פלוס ומינוס לזום, אפס לאיפוס מצלמה"></canvas>
       <button class="live-pill" id="live-pill" type="button" title="מעבר בין מצב חי לדמו"><span class="dot"></span> <span class="pill-label">דמו · סימולציה</span></button>
-      <button class="btn btn-ghost scene-reset" id="btn-resetcam" type="button">איפוס מצלמה</button>
-      <div class="scene-hint">גרירה לסיבוב · גלגלת לזום · לחיצה על סוכן לפרטים</div>
+      <div class="scene-tools" role="toolbar" aria-label="מצלמה">
+        <button class="tool" id="btn-zoomin" type="button" aria-label="התקרבות" title="התקרבות">+</button>
+        <button class="tool" id="btn-zoomout" type="button" aria-label="התרחקות" title="התרחקות">−</button>
+        <button class="tool tool-wide" id="btn-resetcam" type="button">איפוס מצלמה</button>
+      </div>
+      <div class="scene-quick">
+        <button class="btn btn-glass" id="btn-board" type="button">📋 לוח משימות</button>
+        <button class="btn btn-glass" id="btn-shelves" type="button">📚 מדף סקילים</button>
+      </div>
+      <div class="scene-hint">גרירה לסיבוב · צביטה או גלגלת לזום · לחיצה על סוכן, על הלוח או על המדף</div>
       <div class="scene-fallback hidden" id="scene-fallback">
         <p>לא הצלחנו להציג את הסצנה התלת־ממדית.</p>
         <button class="btn" id="scene-retry" type="button">נסה שוב</button>
@@ -92,6 +101,28 @@
 
 <div id="toasts" aria-live="assertive"></div>
 
+<!-- Kanban overlay (readable 2D version of the wall board) -->
+<div id="board-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="board-ov-title">
+  <div class="ov-card card">
+    <div class="ov-head">
+      <div><h3 id="board-ov-title">לוח משימות</h3><div class="muted" id="board-ov-sub"></div></div>
+      <button class="btn btn-ghost ov-close" type="button" data-close="#board-ov" aria-label="סגירה">✕</button>
+    </div>
+    <div class="kb-cols" id="board-ov-cols"></div>
+  </div>
+</div>
+
+<!-- Skills shelves overlay -->
+<div id="shelf-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="shelf-ov-title">
+  <div class="ov-card card ov-narrow">
+    <div class="ov-head">
+      <div><h3 id="shelf-ov-title">מדף הסקילים</h3><div class="muted" id="shelf-ov-sub"></div></div>
+      <button class="btn btn-ghost ov-close" type="button" data-close="#shelf-ov" aria-label="סגירה">✕</button>
+    </div>
+    <div class="sh-list" id="shelf-ov-list"></div>
+  </div>
+</div>
+
 <!-- Login (Ori only) -->
 <div id="login" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
   <form class="modal-card card" id="login-form" autocomplete="on">
@@ -113,6 +144,6 @@
   <span id="foot-live" class="hidden">מצב <span class="hl">חי</span> · נתונים אמיתיים שהסוכנים מדווחים על עצמם · גלוי רק אחרי כניסה</span>
 </footer>
 
-<script type="module" src="./main.js?v=10"></script>
+<script type="module" src="./main.js?v=20"></script>
 </body>
 </html>

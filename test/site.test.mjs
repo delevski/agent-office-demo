@@ -33,3 +33,35 @@ test('no secret values in tracked config', () => {
   assert.doesNotMatch(toml, /^\s*(OFFICE_PASSWORD|SESSION_SECRET|AGENT_TOKEN_\w+|INGEST_TOKEN)\s*=/m);
   assert.doesNotMatch(read('worker.js') + read('server/auth.js'), /\b(password|token)\s*[:=]\s*['"][^'"\n]{6,}['"]/i);
 });
+
+test('v2 scene chrome: zoom buttons, reset, board + shelves overlays, bottom tab bar kept', () => {
+  const html = read('index.html');
+  for (const id of ['btn-zoomin', 'btn-zoomout', 'btn-resetcam', 'btn-board', 'btn-shelves', 'board-ov', 'shelf-ov', 'bottomnav'])
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const label of ['משרד', 'אירועים', 'סוכנים']) assert.ok(html.includes(label), label);
+});
+
+test('showcase: public route, demo only (no private API calls), embeddable', () => {
+  const worker = read('worker.js');
+  assert.match(worker, /\/showcase/);
+  assert.match(worker, /frame-ancestors \*/);
+  const main = read('main.js');
+  assert.match(main, /SHOWCASE/);
+  assert.match(main, /if \(!SHOWCASE\) await checkAuth\(\)/); // never asks the private API
+  assert.match(read('README.md'), /<iframe[^>]+showcase/);
+});
+
+test('accessibility + performance guards', () => {
+  assert.match(read('styles.css'), /prefers-reduced-motion:\s*reduce/);
+  const office = read('office.js');
+  assert.match(office, /prefers-reduced-motion/);
+  assert.match(office, /setPixelRatio\(Math\.min\(devicePixelRatio \|\| 1, maxDpr\)\)/); // capped pixel ratio
+  assert.match(office, /InstancedMesh/);
+  assert.match(office, /mergeStatic/);
+});
+
+test('demo roster carries clearly-demo skills and sample tasks for the shelves and the board', () => {
+  const r = JSON.parse(read('roster.json'));
+  for (const a of r.agents) { assert.ok(a.skills?.length, a.id); assert.ok(a.demoTasks?.length, a.id); }
+  for (const a of r.live) { assert.ok(!a.skills && !a.demoTasks, `${a.id}: live agents report their own skills`); }
+});
