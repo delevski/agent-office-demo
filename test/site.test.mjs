@@ -72,7 +72,20 @@ test('v3: reviews overlay, changes card and the shared insights module are wired
   const ignore = read('.assetsignore').split('\n').map(s => s.trim());
   assert.ok(!ignore.includes('insights.js'), 'insights.js is imported by the browser');
   assert.match(read('main.js'), /from '\.\/insights\.js/);
-  assert.match(read('server/agents.js'), /from '\.\.\/insights\.js'/);
+  assert.match(read('office-state.js'), /from '\.\/insights\.js'/);
   const readme = read('README.md');
   for (const kind of ['review', 'pr.merged', 'deploy']) assert.match(readme, new RegExp('`' + kind.replace('.', '\\.') + '`'), kind);
+});
+
+test('v4: replay bar, summary overlay and the shared reducer are public; replay/summary routes are protected', () => {
+  const html = read('index.html');
+  for (const id of ['btn-replay', 'replay-bar', 'replay-slider', 'replay-play', 'replay-speed', 'replay-exit', 'btn-summary', 'summary-ov', 'summary-text']) assert.match(html, new RegExp(`id="${id}"`), id);
+  const ignore = read('.assetsignore').split('\n').map(s => s.trim());
+  assert.ok(!ignore.includes('office-state.js'), 'office-state.js runs in the browser for the replay');
+  assert.match(read('main.js'), /from '\.\/office-state\.js'/);
+  const worker = read('worker.js');
+  assert.match(worker, /\/api\/replay/);
+  assert.match(worker, /\/api\/summary/);
+  const readme = read('README.md');
+  for (const s of ['`handoff`', '/api/summary', 'budget', 'activity', 'from_agent']) assert.ok(readme.includes(s), s);
 });

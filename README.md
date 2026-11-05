@@ -66,6 +66,8 @@ under `tab`, and naming another agent in the body returns `403`.
 | `GET /api/events?since=N`, `GET /api/ws` | session cookie | Event feed (poll / WebSocket) |
 | `GET /api/reviews[?author=id]` | session cookie | Code reviews (newest last, up to 200) |
 | `GET /api/changes[?day=YYYY-MM-DD]` | session cookie | What changed today: merged PRs, deploys, closed tasks (newest first; day = Israel time) |
+| `GET /api/replay[?day=YYYY-MM-DD]` | session cookie | The day's stored reports plus a start-of-day snapshot, which the day replay plays back (the last 3 days are kept) |
+| `GET /api/summary[?since=ISO\|ms][&format=text]` | session cookie **or** any agent token | Morning summary: what happened since `since` (default: 18:00 yesterday, Israel time), as JSON with a `text` digest, or plain text |
 
 ### Event types (`POST /api/ingest`)
 
@@ -83,6 +85,7 @@ Strings are trimmed and stripped of markup; links must be `http(s)`.
 | `review` | `{"pr", "repo", "title", "author_agent", "reviewer_agent", "verdict", "findings": [], "summary", "round", "ts"}` | A code review: who reviewed which agent's PR and what they found. Feeds the **ביקורות** window and the findings-per-PR trend. See below |
 | `pr.merged` | `{"pr", "repo", "title", "author_agent", "merged_by", "ts"}` | A PR landed. Shows in **מה השתנה היום** |
 | `deploy` | `{"target", "env", "version", "status": "success\|failed\|rolled_back", "link", "note", "ts"}` | Something went live (or failed to). Shows in **מה השתנה היום** |
+| `handoff` | `{"to", "task_id", "title", "link", "note", "from"}` | One agent passes a task to another: an arc flies between the desks, the task lands in the receiver's **to do** column, and the chain is shown on the card. See below |
 | anything else | `{"value", "note"}` | The original free-form event: log line + animation |
 
 `heartbeat` accepts Instinct's snapshot shape:
@@ -117,6 +120,47 @@ and nothing is stored. (The original kinds above are never rejected, so existing
 - The threshold is one constant, `ALERT_AFTER_MIN` in `insights.js`.
 - Where it shows: a red ⚠ sign and a pulsing ring at the agent's desk, a red name tag, a banner above the agent list, the agent's card, and a red dot on the mobile **סוכנים** tab.
 - **7-day graph**: each agent's card shows tasks done (green) and failed (red) per day for the last 7 days (Israel time). It is built from `task.done`, `task.failed` and the heartbeat `recent[]` list, with nothing extra to send.
+
+### v4: activity line, handoffs, budgets, replay, morning summary, meeting room
+
+- **Live activity line.** Add `"activity"` (or `"detail"`) to a `task.start`, `status` or `heartbeat` (`current.detail` works too).
+  - It's up to 120 characters, e.g. `"activity":"running the test suite"`.
+  - It shows under the agent's name tag in the room while they work, in the agent list and on the agent card.
+  - A new task without one clears it, and so does finishing the task.
+- **Handoffs.** Either send a `handoff`, or start the task on the receiving side with `"from_agent"`:
+  - `{"kind":"handoff","to":"hermes","task_id":"k1","title":"Write tests","note":"tests for the trend"}` comes from the sender. `from` defaults to the sender.
+    - The sender's copy is marked ↪️ "handed to Hermes", and its desk is freed.
+    - The receiver gets the task queued, with the chain of who passed it on.
+  - `{"kind":"task.start","task":{...},"from_agent":"tab"}` is sent by the receiver.
+  - A full `"chain":["nova","tab"]` is accepted on `task.start` / `task.queued` as well.
+  - The chain shows on the board card and the agent card, e.g. `Nova → Tab → Hermes`.
+- **Daily budget and meter.** Set `config.budget`, e.g. `{"kind":"config","config":{"budget":{"cost":5}}}`.
+  - The budget can be USD `cost`, `tokens` or `messages`, or a mix. `"budget": 5` means `{"cost": 5}`.
+  - The agent card shows a meter against today's `usage`, and the tightest budget counts.
+  - It turns amber at 80% and red when over. The agent list shows a 💸 chip at those two levels.
+- **Day replay.** In live mode, press **⏪ שחזור יום** in the room. The room, desks, board, feed and **מה השתנה היום** play back from today's stored reports, at ×10, ×60 or ×600.
+  - Drag the slider to jump to any moment. Alerts and offline states are computed for that moment.
+  - The browser runs the same reducer as the server (`office-state.js`), so the replay matches what really happened.
+  - **✕ חזרה לחי** goes back to live.
+- **Morning summary.** `GET /api/summary` (or the **☀️ סיכום בוקר** button) returns the overnight digest:
+  - tasks done or failed per agent;
+  - what each agent is on now;
+  - merged PRs, deploys and reviews;
+  - who is stuck right now.
+  - It is not sent anywhere by itself. To post it every morning, have any scheduler call it with an agent token:
+
+```bash
+# plain text, e.g. for a Slack incoming webhook at 08:30 (not wired up here; this is only an example)
+TEXT=$(curl -s "$URL/api/summary?format=text" -H "Authorization: Bearer $TOKEN")
+curl -s -X POST "$SLACK_WEBHOOK_URL" -H 'Content-Type: application/json' -d "$(jq -n --arg t "$TEXT" '{text:$t}')"
+
+# JSON for your own formatting; since= takes ISO or epoch ms
+curl -s "$URL/api/summary?since=2026-11-04T18:00:00%2B02:00" -H "Authorization: Bearer $TOKEN" | jq .counts
+```
+
+- **Meeting room.** When two or more agents are working at the same time on the same GitHub PR, they get up and sit together at the round table in the lounge. A matching repo link counts too, e.g. a reviewer and an author whose current `task.link` is the same PR.
+  - Their tags read "👥 PR #120", and a toast says who moved.
+  - They go back to their desks when one of them moves on.
 
 Report only what is fine for Ori to read: task names, status, counts and capabilities — no prompts,
 credentials or internals. `model` is whatever name the agent wants shown (Tab reports `"Tab"`).
