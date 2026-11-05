@@ -1,8 +1,8 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=22';
+import { createOffice } from './office.js?v=23';
 import { emblemSVG } from './emblems.js';
-import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups } from './insights.js';
+import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
 import { applyReport, publicView as viewAt, feedNote, isFeedEvent, emptyAgent } from './office-state.js';
 
 /* ---------------- page modes ---------------- */
@@ -61,7 +61,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=22');
+    const r = await fetch('./roster.json?v=23');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -615,6 +615,7 @@ function livePanelHtml(a) {
   return head + alertHtml + `
     <div class="ap-seen muted">דיווח אחרון ${ago(v.lastSeen)}</div>
     <section class="ap-sec"><h4>עובד עכשיו על</h4>${currentHtml}</section>
+    ${reliabilityHtml(a, v)}
     <section class="ap-sec"><h4>7 ימים אחרונים</h4>${historyHtml(v.history7)}</section>
     <section class="ap-sec"><h4>שימוש היום</h4>${usageHtml}</section>
     ${agentReviewsHtml(a)}
@@ -1008,6 +1009,52 @@ $('#replay-slider')?.addEventListener('input', e => {
 });
 window.__replay = { enter: enterReplay, exit: exitReplay, seek: t => replaySeek(t), play: on => replayPlay(on), state: () => ({ active: replay.active, t: replay.t, t0: replay.t0, t1: replay.t1, idx: replay.idx, n: replay.data?.reports.length || 0 }), speed: s => { replay.speed = s; $('#replay-speed').textContent = '×' + s; } };
 
+
+/* ---------------- C1. reliability score ---------------- */
+function reliabilityHtml(a, v) {
+  if (!v?.hasData) return '';
+  const trend = reviewTrend(reviews.filter(r => r.author_agent === a.id))[0] || null;
+  const rel = reliability(v, trend, alertOf(v));
+  const R = RELIABILITY;
+  return `<section class="ap-sec rel rel-${rel.level}"><h4>אמינות</h4>
+    <div class="rel-top"><div class="rel-score" dir="ltr">${rel.score}<small>/100</small></div>
+      <div><div class="rel-label">${esc(rel.label)}</div>${rel.lowData ? '<div class="muted">מעט נתונים עדיין, הציון יתייצב עם עוד משימות</div>' : ''}</div></div>
+    <div class="rel-parts">${rel.parts.map(p => `<div class="rel-part"><div class="rel-row"><span>${esc(p.label)}</span><span dir="ltr">${p.points}/${p.max}</span></div>
+      <div class="rel-bar"><span style="width:${Math.round(p.points / p.max * 100)}%"></span></div><div class="muted">${esc(p.detail)}</div></div>`).join('')}</div>
+    <details class="rel-how"><summary>איך זה מחושב?</summary>
+      <p><b>הצלחה (${R.success})</b>: החלק מהמשימות שהסתיימו ב-7 הימים האחרונים שהושלמו ולא נכשלו. בלי משימות שהסתיימו: ${Math.round(R.success * 0.75)} (ניטרלי).</p>
+      <p><b>יציבות (${R.stability})</b>: מתחילים מ-${R.stability} ומורידים ${R.stuckPenalty} על כל פעם שהסוכן נתקע (משימה פתוחה בלי עדכון יותר מ-${ALERT_AFTER_MIN} דקות) ב-7 ימים.</p>
+      <p><b>איכות קוד (${R.quality})</b>: לפי מגמת הממצאים בביקורות על ה-PRs של הסוכן, מה-PRs הראשונים לאחרונים. ירידה מלאה = ${R.quality}, בלי שינוי = ${R.quality / 2}, עלייה = פחות. בלי ביקורות: ${R.quality / 2}.</p>
+      <p class="muted">הכול מחושב מהאירועים שהסוכנים כבר שולחים. אין שדה חדש לדווח.</p>
+    </details></section>`;
+}
+
+/* ---------------- C2. "give a task": a card on the board, nothing else ---------------- */
+function openAssign(agentId = '') {
+  const sel = $('#assign-agent');
+  const list = LIVE.length ? LIVE : [];
+  sel.innerHTML = list.map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
+  openOverlay('#assign-ov');
+  setTimeout(() => $('#assign-title').focus(), 60);
+}
+$('#btn-assign')?.addEventListener('click', () => openAssign(selectedId || ''));
+$('#assign-form')?.addEventListener('submit', e => {
+  e.preventDefault();
+  const title = $('#assign-title').value.trim(), agent = $('#assign-agent').value, note = $('#assign-note').value.trim();
+  if (!title) { $('#assign-err').textContent = 'צריך כותרת למשימה'; $('#assign-title').focus(); return; }
+  withBusy($('#assign-submit'), 'מוסיף…', async () => {
+    const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, agent, note }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) { onLoggedOut(true); return; }
+    if (!r.ok || !d.ok) { $('#assign-err').textContent = 'לא נוסף: ' + ((d.details || []).join(', ') || d.error || r.status); return; }
+    closeOverlay('#assign-ov');
+    toast(`🗂️ נוסף ללוח של ${nameOf(agent)}: ${title}`);
+    loadAgents();
+    if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay();
+  });
+});
+
 /* ---------------- login (Ori only) ---------------- */
 async function checkAuth() {
   try {
@@ -1219,7 +1266,7 @@ function boardData() {
   for (const a of LIVE) {
     const v = liveState.get(a.id);
     for (const t of v?.tasks || []) {
-      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to };
+      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to, assigned: t.assigned, note: t.note };
       card.when = card.ts ? when(card.ts) : '';
       if (t.status === 'running') cols.doing.push(card);
       else if (t.status === 'queued' || t.status === 'blocked') cols.todo.push(card);
@@ -1262,7 +1309,7 @@ function openBoard() { renderBoardOverlay(); openOverlay('#board-ov'); }
 function openShelves() { renderShelfOverlay(); openOverlay('#shelf-ov'); }
 function renderBoardOverlay() {
   const bd = boardData();
-  $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות שהסוכנים דיווחו על עצמם';
+  $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות שהסוכנים דיווחו, וכרטיסים שנוספו ידנית';
   const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
   $('#board-ov-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
     const list = bd.columns[k];
@@ -1271,7 +1318,7 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}</div>
+        <div class="kb-meta">${c.assigned ? '<span class="kb-manual" title="נוסף ידנית מהלוח">✍️ ידני</span> · ' : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');

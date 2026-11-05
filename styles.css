@@ -528,3 +528,26 @@ body:not(.is-live) .live-only{display:none !important}
   #replay-slider{order:9;flex-basis:100%}
   .rp-edge{display:none}
 }
+
+
+/* =================== v5: reliability score, "give a task" =================== */
+.rel-top{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.rel-score{font-size:2rem;font-weight:900;line-height:1;color:var(--gold-soft)}
+.rel-score small{font-size:.8rem;color:var(--muted);font-weight:700}
+.rel-label{font-weight:800}
+.rel-great .rel-score{color:#4ade80}.rel-good .rel-score{color:#a3e635}.rel-fair .rel-score{color:#f59e0b}.rel-low .rel-score{color:#ef4444}
+.rel-part{margin-bottom:6px}
+.rel-row{display:flex;justify-content:space-between;font-size:.8rem;font-weight:700}
+.rel-bar{height:6px;border-radius:99px;background:#2c2416;overflow:hidden;margin:3px 0 2px}
+.rel-bar span{display:block;height:100%;background:var(--gold);border-radius:99px}
+.rel-how{margin-top:6px;font-size:.8rem}
+.rel-how summary{cursor:pointer;color:var(--gold-soft);font-weight:700}
+.rel-how p{margin:6px 0;line-height:1.55}
+.kb-add{margin-inline-start:auto;font-size:.8rem;padding:6px 12px}
+.kb-manual{color:#7a5a12;font-weight:800}
+.kb-note{font-size:.72rem;color:#5d5444;margin-top:3px;white-space:pre-wrap}
+.as-form{display:flex;flex-direction:column;gap:10px}
+.as-form label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:.85rem}
+.as-form input,.as-form select,.as-form textarea{font:inherit;font-weight:500;background:#15110b;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
+.as-form input:focus,.as-form select:focus,.as-form textarea:focus{outline:2px solid var(--gold);outline-offset:1px}
+.as-err{color:#fca5a5;font-size:.8rem;min-height:1em}
