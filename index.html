@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=20">
+<link rel="stylesheet" href="./styles.css?v=21">
 <meta name="theme-color" content="#14110c">
 </head>
 <body>
@@ -56,6 +56,7 @@
       <div class="scene-quick">
         <button class="btn btn-glass" id="btn-board" type="button">📋 לוח משימות</button>
         <button class="btn btn-glass" id="btn-shelves" type="button">📚 מדף סקילים</button>
+        <button class="btn btn-glass live-only" id="btn-reviews" type="button">🔍 ביקורות</button>
       </div>
       <div class="scene-hint">גרירה לסיבוב · צביטה או גלגלת לזום · לחיצה על סוכן, על הלוח או על המדף</div>
       <div class="scene-fallback hidden" id="scene-fallback">
@@ -69,6 +70,10 @@
   <section id="view-agents" class="view">
     <div class="kpis" id="kpis"></div>
     <div class="card agent-panel" id="agent-panel"></div>
+    <div class="card ch-card live-only" id="changes-card">
+      <div class="card-head"><h3>מה השתנה היום</h3><span class="muted" id="changes-sub">היום</span></div>
+      <ul class="ch-list" id="changes-list" aria-live="polite"></ul>
+    </div>
     <div class="card chart-card">
       <div class="card-head"><h3>אירועים לדקה</h3><span class="muted" id="chart-sub">30 הדקות האחרונות · דמו</span></div>
       <canvas id="chart" height="90"></canvas>
@@ -123,6 +128,17 @@
   </div>
 </div>
 
+<!-- Code reviews overlay (live mode): who reviewed each PR, what they found, findings-per-PR trend -->
+<div id="review-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="review-ov-title">
+  <div class="ov-card card">
+    <div class="ov-head">
+      <div><h3 id="review-ov-title">ביקורות קוד</h3><div class="muted" id="review-ov-sub"></div></div>
+      <button class="btn btn-ghost ov-close" type="button" data-close="#review-ov" aria-label="סגירה">✕</button>
+    </div>
+    <div class="rv-body" id="review-ov-body"></div>
+  </div>
+</div>
+
 <!-- Login (Ori only) -->
 <div id="login" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
   <form class="modal-card card" id="login-form" autocomplete="on">
@@ -144,6 +160,6 @@
   <span id="foot-live" class="hidden">מצב <span class="hl">חי</span> · נתונים אמיתיים שהסוכנים מדווחים על עצמם · גלוי רק אחרי כניסה</span>
 </footer>
 
-<script type="module" src="./main.js?v=20"></script>
+<script type="module" src="./main.js?v=21"></script>
 </body>
 </html>

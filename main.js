@@ -1,7 +1,8 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=20';
+import { createOffice } from './office.js?v=21';
 import { emblemSVG } from './emblems.js';
+import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES } from './insights.js?v=21';
 
 /* ---------------- page modes ---------------- */
 // /showcase or ?showcase=1 : public, embeddable, demo-only view (never calls the private API).
@@ -59,7 +60,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=20');
+    const r = await fetch('./roster.json?v=21');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -157,6 +158,7 @@ function showCast() {
   $('#log-sub').textContent = mode === 'live' ? 'אירועים אמיתיים שהסוכנים מדווחים' : 'טבלת דמו · כל שורה מזיזה דמות';
   $('#foot-demo').classList.toggle('hidden', mode === 'live');
   $('#foot-live').classList.toggle('hidden', mode !== 'live');
+  if (office) refreshAlerts();
 }
 function resetBoard() {
   selectedId = null;
@@ -168,6 +170,7 @@ function resetBoard() {
   renderKpis();
   renderPanelDefault();
   updateWallScreen();
+  renderChanges();
 }
 function enterLiveMode({ quiet = false } = {}) {
   if (!auth.loggedIn) { openLogin(); return; }
@@ -179,6 +182,7 @@ function enterLiveMode({ quiet = false } = {}) {
   setPill();
   lastId = 0;
   loadAgents().then(() => pollEvents(true));
+  loadReviews(); loadChanges();
   connectLive();
   refreshWorld(true);
   if (!quiet) toast('⚡ מצב חי — הסוכנים האמיתיים שלך');
@@ -289,6 +293,7 @@ function renderPanel(a) {
     if (isMobile) $('#sheet').classList.add('hidden');
     renderPanelDefault();
   });
+  target.querySelector('#ap-reviews')?.addEventListener('click', () => openReviews(a.id));
   target.querySelector('#ap-focus').addEventListener('click', e => {
     withBusy(e.currentTarget, 'ממקד…', async () => {
       await delay(250);
@@ -311,6 +316,7 @@ function renderPanelDefault() {
   if (!el) return;
   el.innerHTML = `
     <div class="card-head" style="padding:0 0 8px"><h3>הסוכנים</h3><span class="muted">${mode === 'live' ? liveCountLabel() : AGENTS.length + ' פעילים'}</span></div>
+    ${mode === 'live' ? alertBannerHtml() : ''}
     <div class="ag-list">${roster().map(a => {
       if (a.live) return liveListItem(a);
       const st = statOf(a.id);
@@ -321,7 +327,7 @@ function renderPanelDefault() {
         <span class="mono muted">${st.events}</span>
       </div>`;
     }).join('')}</div>`;
-  document.querySelectorAll('.ag-item').forEach(el => {
+  document.querySelectorAll('.ag-item, .al-row').forEach(el => {
     el.addEventListener('click', () => selectAgent(el.dataset.id));
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectAgent(el.dataset.id); } });
   });
@@ -399,6 +405,8 @@ function connectLive() {
       const m = JSON.parse(e.data);
       if (m.type === 'event' && m.event) onLiveEvent(m.event);
       if (m.type === 'agent' && m.agent) onAgentUpdate(m.agent);
+      if (m.type === 'review' && m.review) onReview(m.review);
+      if (m.type === 'change' && m.change) onChange(m.change);
     } catch {}
   };
   sock.onclose = () => { if (ws === sock) ws = null; if (auth.loggedIn) setTimeout(connectLive, 5000); };
@@ -459,6 +467,7 @@ function onAgentUpdate(view, { quiet = false } = {}) {
   st.events = Math.max(st.events, view.events || 0);
   if (view.current?.title) st.last = view.current.title;
   office.setStatus(a.id, sceneStatus(view));
+  applyAlert(a);
   refreshWorld();
   if (quiet || mode !== 'live') return;
   renderKpis();
@@ -535,11 +544,13 @@ function liveListItem(a) {
   const v = liveState.get(a.id);
   const st = statusOf(v);
   const line = st === 'nodata' ? 'אין נתונים עדיין' : v.current?.title ? v.current.title : (STATUS_HE[st] + (v.lastSeen ? ' · ' + ago(v.lastSeen) : ''));
-  return `<div class="ag-item" data-id="${esc(a.id)}" role="button" tabindex="0">
+  const al = alertOf(v);
+  return `<div class="ag-item${al ? ' ag-alert' : ''}" data-id="${esc(a.id)}" role="button" tabindex="0">
     <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
     <div class="grow"><div style="font-weight:800;font-size:.88rem">${esc(a.name)} · <span class="muted">${esc(a.role)}</span></div>
     <div class="ag-last">${esc(line)}</div></div>
-    <span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>
+    ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">⚠ ${esc(alertLabel(al))}</span>`
+      : `<span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>`}
   </div>`;
 }
 function usageTile(label, value) {
@@ -590,13 +601,235 @@ function livePanelHtml(a) {
        ${c.skills?.length ? `<div class="ap-sub">סקילים <span class="muted">(${c.skills.length})</span></div><div class="chips">${chips(c.skills)}</div>` : ''}
        ${c.tools?.length ? `<div class="ap-sub">כלים <span class="muted">(${c.tools.length})</span></div><div class="chips chips-tools">${chips(c.tools)}</div>` : ''}`
     : `<div class="ap-empty-line">הסוכן עוד לא דיווח על היכולות שלו</div>`;
-  return head + `
+  const al = alertOf(v);
+  const alertHtml = al ? `<div class="al-card" role="alert"><b>⚠ ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}</b> <span>${esc(alertTitle(al))}</span></div>` : '';
+  return head + alertHtml + `
     <div class="ap-seen muted">דיווח אחרון ${ago(v.lastSeen)}</div>
     <section class="ap-sec"><h4>עובד עכשיו על</h4>${currentHtml}</section>
+    <section class="ap-sec"><h4>7 ימים אחרונים</h4>${historyHtml(v.history7)}</section>
     <section class="ap-sec"><h4>שימוש היום</h4>${usageHtml}</section>
+    ${agentReviewsHtml(a)}
     <section class="ap-sec"><h4>משימות אחרונות</h4>${tasksHtml}</section>
     <section class="ap-sec"><h4>יכולות</h4>${configHtml}</section>` + focus;
 }
+
+
+/* ---------------- 3. stuck / silent alerts ---------------- */
+const alertShown = new Map(); // id -> alert kind already toasted
+function alertOf(v) { return v ? agentAlert(v, Date.now()) : null; }
+function alertTitle(al) {
+  if (!al) return '';
+  return al.kind === 'stuck'
+    ? `אין עדכון על המשימה${al.task ? ` "${al.task}"` : ''} מאז ${hhmm(al.since)} (הסף: ${ALERT_AFTER_MIN} דק׳)`
+    : `אין דיווח מאז ${hhmm(al.since)} (הסף: ${ALERT_AFTER_MIN} דק׳)`;
+}
+function liveAlerts() {
+  return LIVE.map(a => ({ a, al: alertOf(liveState.get(a.id)) })).filter(x => x.al);
+}
+function alertBannerHtml() {
+  const list = liveAlerts();
+  if (!list.length) return '';
+  return `<div class="al-banner" role="alert">
+    <div class="al-title">⚠ ${list.length === 1 ? 'סוכן אחד דורש תשומת לב' : `${list.length} סוכנים דורשים תשומת לב`}</div>
+    ${list.map(({ a, al }) => `<div class="al-row" data-id="${esc(a.id)}" role="button" tabindex="0">
+      <span class="ap-emblem sm">${emblemSVG(a, 26, { title: false })}</span>
+      <span class="grow"><b>${esc(a.name)}</b> · ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}${al.task ? ` · <span class="muted">${esc(al.task)}</span>` : ''}</span>
+    </div>`).join('')}
+  </div>`;
+}
+function applyAlert(a) {
+  const al = mode === 'live' ? alertOf(liveState.get(a.id)) : null;
+  office.setAlert(a.id, al ? { kind: al.kind, label: alertLabel(al) } : null);
+  if (al && alertShown.get(a.id) !== al.kind && mode === 'live') toast(`⚠ ${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
+  if (al) alertShown.set(a.id, al.kind); else alertShown.delete(a.id);
+  return al;
+}
+function refreshAlerts() {
+  if (!office) return;
+  let n = 0;
+  for (const a of LIVE) if (applyAlert(a)) n++;
+  const nav = document.querySelector('.navbtn[data-view="view-agents"]');
+  if (nav) nav.classList.toggle('has-alert', mode === 'live' && n > 0);
+  if (mode === 'live' && !selectedId && window.innerWidth > 900) renderPanelDefault();
+}
+setInterval(refreshAlerts, 20_000);
+
+/* ---------------- 2. 7-day history (per agent, from task.done / task.failed) ---------------- */
+const DOW_HE = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
+function historyHtml(days) {
+  days = Array.isArray(days) && days.length ? days : [];
+  if (!days.length) return `<div class="ap-empty-line">אין נתונים לשבוע האחרון</div>`;
+  const done = days.reduce((s, d) => s + d.done, 0), failed = days.reduce((s, d) => s + d.failed, 0);
+  const max = Math.max(4, ...days.map(d => d.done + d.failed));
+  const W = 280, H = 92, padB = 18, colW = W / days.length, barW = Math.min(22, colW * 0.56);
+  const bars = days.map((d, i) => {
+    const x = i * colW + (colW - barW) / 2;
+    const hD = (d.done / max) * (H - padB - 14), hF = (d.failed / max) * (H - padB - 14);
+    const yD = H - padB - hD, yF = yD - hF;
+    const dow = DOW_HE[new Date(d.day + 'T12:00:00Z').getUTCDay()];
+    const today = i === days.length - 1;
+    const tot = d.done + d.failed;
+    return `<g><title>${d.day}: ${d.done} הושלמו, ${d.failed} נכשלו</title>
+      <rect x="${x}" y="${H - padB - 1}" width="${barW}" height="1" fill="#3a2f1d"/>
+      ${d.done ? `<rect x="${x}" y="${yD}" width="${barW}" height="${hD}" rx="3" fill="#4ade80"/>` : ''}
+      ${d.failed ? `<rect x="${x}" y="${yF}" width="${barW}" height="${hF}" rx="3" fill="#f87171"/>` : ''}
+      ${tot ? `<text x="${x + barW / 2}" y="${yF - 4}" text-anchor="middle" class="h-num">${tot}</text>` : ''}
+      <text x="${x + barW / 2}" y="${H - 4}" text-anchor="middle" class="h-day${today ? ' h-today' : ''}">${today ? 'היום' : dow}</text></g>`;
+  }).join('');
+  // the SVG is drawn left-to-right (oldest -> today) inside an LTR box so "today" sits at the end of the timeline
+  return `<div class="hist" dir="ltr"><svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="משימות ב-7 הימים האחרונים">${bars}</svg></div>
+    <div class="hist-sum">${done || failed ? `<span><i class="lg lg-done"></i>${done} הושלמו</span><span><i class="lg lg-fail"></i>${failed} נכשלו</span>` : '<span class="muted">אין משימות שהסתיימו בשבוע האחרון</span>'}</div>`;
+}
+
+/* ---------------- 1. code reviews ---------------- */
+let reviews = [];
+const VERDICT_HE = { approved: ['אושר', '✅', 'v-ok'], changes_requested: ['נדרשו תיקונים', '🔁', 'v-chg'], commented: ['הערות', '💬', 'v-com'] };
+const SEV_HE = { critical: 'קריטי', high: 'גבוה', medium: 'בינוני', low: 'נמוך', nit: 'ניטפיק' };
+async function loadReviews() {
+  if (!auth.loggedIn || mode !== 'live') return;
+  try { const d = await apiGet('./api/reviews'); if (d) { reviews = d.reviews || []; afterReviews(); } } catch (e) { console.warn(e); }
+}
+function onReview(r) {
+  if (mode !== 'live') return;
+  const i = reviews.findIndex(x => x.id === r.id);
+  if (i >= 0) reviews[i] = r; else reviews.push(r);
+  reviews.sort((a, b) => a.ts - b.ts);
+  afterReviews();
+}
+function afterReviews() {
+  if (!$('#review-ov').classList.contains('hidden')) renderReviewOverlay();
+  if (selectedId) { const a = findAgent(selectedId); if (a?.live) renderPanel(a); }
+}
+function agentMeta(id) { return LIVE.find(x => x.id === id) || AGENTS.find(x => x.id === id) || { id, name: id, color: '#a89c86', role: '' }; }
+function nameOf(id) { return agentMeta(id).name || id; }
+function trendChartSvg(trend, { W = 560, H = 190, focus = null, compact = false } = {}) {
+  const series = trend.filter(s => s.points.length);
+  if (!series.length) return '';
+  const all = series.flatMap(s => s.points);
+  const t0 = Math.min(...all.map(p => p.ts)), t1 = Math.max(...all.map(p => p.ts));
+  const maxY = Math.max(4, ...all.map(p => p.findings));
+  const pl = compact ? 6 : 30, pr = compact ? 6 : 12, pt = compact ? 8 : 14, pb = compact ? 8 : 22;
+  const x = ts => pl + (t1 === t0 ? 0.5 : (ts - t0) / (t1 - t0)) * (W - pl - pr);
+  const y = v => pt + (1 - v / maxY) * (H - pt - pb);
+  const grid = compact ? '' : [0, Math.round(maxY / 2), maxY].map(v => `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="#332a1c" stroke-dasharray="3 4"/><text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" class="t-ax">${v}</text>`).join('');
+  const labelled = [];
+  const lines = series.map(s => {
+    const c = agentMeta(s.author).color, dim = focus && s.author !== focus;
+    const lp = s.points[s.points.length - 1], lx = x(lp.ts), ly = y(lp.findings);
+    const showLabel = !compact && !labelled.some(([px, py]) => Math.abs(px - lx) < 18 && Math.abs(py - ly) < 14);
+    if (showLabel) labelled.push([lx, ly]);
+    const pts = s.points.map(p => `${x(p.ts).toFixed(1)},${y(p.findings).toFixed(1)}`).join(' ');
+    return `<g opacity="${dim ? 0.28 : 1}"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="${compact ? 2 : 3}" stroke-linejoin="round" stroke-linecap="round"/>
+      ${s.points.map(p => `<circle cx="${x(p.ts).toFixed(1)}" cy="${y(p.findings).toFixed(1)}" r="${compact ? 2.5 : 4.5}" fill="#15110b" stroke="${c}" stroke-width="2"><title>${esc(nameOf(s.author))} · PR #${esc(p.pr)}: ${p.findings} ממצאים</title></circle>`).join('')}
+      ${showLabel ? `<text x="${lx - 8}" y="${ly - 9}" text-anchor="end" class="t-lbl" fill="${c}">${lp.findings}</text>` : ''}</g>`;
+  }).join('');
+  const axis = compact ? '' : `<text x="${pl}" y="${H - 4}" class="t-ax">${esc(dateShort(t0))}</text><text x="${W - pr}" y="${H - 4}" text-anchor="end" class="t-ax">${esc(dateShort(t1))}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%"${compact ? ` height="${H}"` : ''} preserveAspectRatio="${compact ? 'none' : 'xMidYMid meet'}" role="img" aria-label="ממצאים לכל PR לאורך זמן">${grid}${lines}${axis}</svg>`;
+}
+function dateShort(ts) { return new Date(ts).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }); }
+function changePct(s) {
+  if (s.change === null || s.change === undefined || s.points.length < 2) return '';
+  const pct = Math.round(Math.abs(s.change) * 100);
+  if (pct === 0) return '<span class="tr-flat">ללא שינוי</span>';
+  return s.change < 0 ? `<span class="tr-down" title="פחות ממצאים לכל PR">↓ ${pct}%</span>` : `<span class="tr-up" title="יותר ממצאים לכל PR">↑ ${pct}%</span>`;
+}
+function sevChips(findings) {
+  const c = severityCounts(findings);
+  const chips = SEVERITIES.filter(s => c[s]).map(s => `<span class="sev sev-${s}">${c[s]} ${SEV_HE[s]}</span>`).join('');
+  return chips || '<span class="sev sev-none">בלי ממצאים</span>';
+}
+function agentReviewsHtml(a) {
+  const mine = reviews.filter(r => r.author_agent === a.id);
+  const given = reviews.filter(r => r.reviewer_agent === a.id).length;
+  if (!mine.length && !given) return '';
+  const tr = reviewTrend(mine)[0];
+  const last = mine[mine.length - 1];
+  return `<section class="ap-sec"><h4>ביקורות קוד</h4>
+    ${tr ? `<div class="rv-mini">${trendChartSvg([tr], { W: 280, H: 54, compact: true })}</div>
+      <div class="rv-mini-sum">${tr.points.length} PRs נבדקו · ממצאים: ${tr.first} → ${tr.last} ${changePct(tr)}</div>
+      <div class="rv-mini-last muted">אחרון: PR #${esc(last.pr)} · ${esc(nameOf(last.reviewer_agent))} · ${VERDICT_HE[last.verdict]?.[0] || ''}</div>` : ''}
+    ${given ? `<div class="rv-mini-last muted">ביקר ${given} PRs של אחרים</div>` : ''}
+    <button class="btn btn-ghost rv-open" id="ap-reviews" type="button">🔍 כל הביקורות</button></section>`;
+}
+let reviewFocus = null;
+function openReviews(focus = null) { reviewFocus = focus; renderReviewOverlay(); openOverlay('#review-ov'); }
+function renderReviewOverlay() {
+  const trend = reviewTrend(reviews);
+  $('#review-ov-sub').textContent = 'חי · מי ביקר כל PR, מה נמצא, ואיך זה משתנה לאורך זמן';
+  if (!reviews.length) {
+    $('#review-ov-body').innerHTML = `<div class="rv-empty"><b>עוד אין ביקורות.</b><br>כשסוכן יבקר PR הוא ישלח <span class="mono">review</span> ל-<span class="mono">/api/ingest</span>, והביקורת תופיע כאן עם גרף הממצאים לכל סוכן.</div>`;
+    return;
+  }
+  const legend = trend.map(s => `<button type="button" class="rv-leg${reviewFocus === s.author ? ' on' : ''}" data-author="${esc(s.author)}" style="--ac:${esc(agentMeta(s.author).color)}">
+      <span class="ap-emblem sm">${emblemSVG(agentMeta(s.author), 24, { title: false })}</span>
+      <span><b>${esc(nameOf(s.author))}</b> <span class="muted">${s.points.length} PRs · ${s.first} → ${s.last}</span> ${changePct(s)}</span></button>`).join('');
+  const cards = reviews.slice().reverse().map(r => {
+    const au = agentMeta(r.author_agent), rv = agentMeta(r.reviewer_agent);
+    const [vt, vi, vc] = VERDICT_HE[r.verdict] || ['', '', ''];
+    const title = `PR #${esc(r.pr)}${r.title ? ' · ' + esc(r.title) : ''}`;
+    return `<article class="rv-card" style="--ac:${esc(au.color)}">
+      <div class="rv-top">
+        <div class="grow"><div class="rv-title">${safeUrl(r.link) ? `<a href="${safeUrl(r.link)}" target="_blank" rel="noopener">${title} ↗</a>` : title}</div>
+          <div class="rv-meta">${r.repo ? `<span class="mono">${esc(r.repo)}</span> · ` : ''}${esc(when(r.ts))}${r.round > 1 ? ` · סבב ${r.round}` : ''}</div></div>
+        <span class="rv-verdict ${vc}">${vi} ${vt}</span>
+      </div>
+      <div class="rv-who"><span class="ap-emblem sm">${emblemSVG(au, 22, { title: false })}</span><b>${esc(au.name)}</b><span class="muted">כתב</span>
+        <span class="rv-arrow">←</span><span class="ap-emblem sm">${emblemSVG(rv, 22, { title: false })}</span><b>${esc(rv.name)}</b><span class="muted">ביקר</span></div>
+      <div class="chips rv-sev">${sevChips(r.findings)}</div>
+      ${r.summary ? `<div class="rv-sum">${esc(r.summary)}</div>` : ''}
+      ${r.findings.length ? `<ul class="rv-find">${r.findings.slice(0, 4).map(f => `<li><span class="sev-dot sev-${f.severity}"></span><span class="grow">${esc(f.title)}${f.file ? ` <span class="mono muted">${esc(f.file)}${f.line ? ':' + f.line : ''}</span>` : ''}</span></li>`).join('')}${r.findings.length > 4 ? `<li class="muted">ועוד ${r.findings.length - 4}…</li>` : ''}</ul>` : ''}
+    </article>`;
+  }).join('');
+  $('#review-ov-body').innerHTML = `
+    <section class="rv-trend">
+      <div class="rv-trend-head"><h4>ממצאים לכל PR לאורך זמן</h4><span class="muted">קו שיורד = פחות ממצאים בכל PR</span></div>
+      <div class="rv-chart" dir="ltr">${trendChartSvg(trend, { focus: reviewFocus })}</div>
+      <div class="rv-legend">${legend}</div>
+    </section>
+    <div class="rv-list">${cards}</div>`;
+  document.querySelectorAll('.rv-leg').forEach(b => b.addEventListener('click', () => {
+    reviewFocus = reviewFocus === b.dataset.author ? null : b.dataset.author; renderReviewOverlay();
+  }));
+}
+
+/* ---------------- 4. what changed today ---------------- */
+let changesToday = [], changesDay = '';
+const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅' };
+async function loadChanges() {
+  if (!auth.loggedIn || mode !== 'live') return;
+  try { const d = await apiGet('./api/changes'); if (d) { changesToday = d.changes || []; changesDay = d.day || ''; renderChanges(); } } catch (e) { console.warn(e); }
+}
+function todayKey() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date()); }
+function onChange(c) {
+  if (mode !== 'live') return;
+  if (new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date(c.ts)) !== todayKey()) return;
+  changesToday = [c, ...changesToday.filter(x => x.id !== c.id)].sort((a, b) => b.ts - a.ts);
+  renderChanges();
+}
+function changeLine(c) {
+  if (c.type === 'pr.merged') return `<b>מוזג</b> PR${c.pr ? ' #' + esc(c.pr) : ''}${c.title ? ' · ' + esc(c.title) : ''}${c.repo ? ` <span class="mono muted">${esc(c.repo)}</span>` : ''}`;
+  if (c.type === 'deploy') {
+    const st = c.status === 'success' ? '<b>פריסה</b>' : c.status === 'failed' ? '<b class="ch-fail">פריסה נכשלה</b>' : '<b class="ch-fail">פריסה בוטלה</b>';
+    return `${st} ${esc(c.target)} → ${esc(c.env)}${c.version ? ` <span class="mono muted">${esc(c.version)}</span>` : ''}`;
+  }
+  return `<b>הושלם</b> ${esc(c.title)}`;
+}
+function renderChanges() {
+  const el = $('#changes-list'); if (!el) return;
+  const counts = { 'pr.merged': 0, deploy: 0, 'task.done': 0 };
+  changesToday.forEach(c => { if (counts[c.type] !== undefined) counts[c.type]++; });
+  $('#changes-sub').textContent = changesToday.length ? `${counts['pr.merged']} מיזוגים · ${counts.deploy} פריסות · ${counts['task.done']} משימות` : 'היום';
+  if (!changesToday.length) { el.innerHTML = `<div class="ch-empty">עוד לא השתנה כלום היום. מיזוגים, פריסות ומשימות שנסגרו יופיעו כאן.</div>`; return; }
+  el.innerHTML = changesToday.map(c => {
+    const a = agentMeta(c.merged_by || c.agent);
+    const body = changeLine(c);
+    return `<li class="ch-item ch-${c.type.replace('.', '-')}">
+      <span class="ch-time">${esc(hhmm(c.ts))}</span><span class="ch-ico" aria-hidden="true">${CHANGE_ICON[c.type] || '•'}</span>
+      <span class="grow">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${body}</a>` : body}
+        <span class="ch-by" style="color:${esc(a.color)}">${esc(a.name)}</span></span></li>`;
+  }).join('');
+}
+setInterval(() => { if (mode === 'live') { loadChanges(); loadReviews(); } }, 60_000);
 
 /* ---------------- login (Ori only) ---------------- */
 async function checkAuth() {
@@ -886,6 +1119,7 @@ document.addEventListener('keydown', e => {
 });
 $('#btn-board').addEventListener('click', () => { office?.focusBoard(); openBoard(); });
 $('#btn-shelves').addEventListener('click', () => { office?.focusShelf(); openShelves(); });
+$('#btn-reviews').addEventListener('click', () => openReviews(null));
 $('#btn-zoomin').addEventListener('click', () => office?.zoomBy(0.75));
 $('#btn-zoomout').addEventListener('click', () => office?.zoomBy(1.33));
 document.addEventListener('keydown', e => { if (e.key === 'Tab') document.body.classList.add('kbd'); });

@@ -64,6 +64,8 @@ under `tab`, and naming another agent in the body returns `403`.
 | `GET /api/me` | — | `{"loggedIn": bool, "loginConfigured": bool}` |
 | `GET /api/agents`, `GET /api/agents/:id` | session cookie | Live state for the panel |
 | `GET /api/events?since=N`, `GET /api/ws` | session cookie | Event feed (poll / WebSocket) |
+| `GET /api/reviews[?author=id]` | session cookie | Code reviews (newest last, up to 200) |
+| `GET /api/changes[?day=YYYY-MM-DD]` | session cookie | What changed today: merged PRs, deploys, closed tasks (newest first; day = Israel time) |
 
 ### Event types (`POST /api/ingest`)
 
@@ -78,10 +80,43 @@ Strings are trimmed and stripped of markup; links must be `http(s)`.
 | `status` | `{"status": "working\|idle\|blocked\|offline", "task": {…}}` | Sets status (and optionally *now*) |
 | `usage` | `{"usage": {"messages", "tokens", "cost", "tasks"}, "mode": "set\|add", "day": "YYYY-MM-DD"}` | Today's usage. `set` (default) = today's totals so far, safe to resend; `add` = increment. `cost` is in USD. Day = Israel time. `tasks` defaults to tasks finished today. |
 | `config` | `{"config": {"model", "skills": [], "tools": [], "description"}}` | Capabilities shown on the card (merged) |
+| `review` | `{"pr", "repo", "title", "author_agent", "reviewer_agent", "verdict", "findings": [], "summary", "round", "ts"}` | A code review: who reviewed which agent's PR and what they found. Feeds the **ביקורות** window and the findings-per-PR trend. See below |
+| `pr.merged` | `{"pr", "repo", "title", "author_agent", "merged_by", "ts"}` | A PR landed. Shows in **מה השתנה היום** |
+| `deploy` | `{"target", "env", "version", "status": "success\|failed\|rolled_back", "link", "note", "ts"}` | Something went live (or failed to). Shows in **מה השתנה היום** |
 | anything else | `{"value", "note"}` | The original free-form event: log line + animation |
 
 `heartbeat` accepts Instinct's snapshot shape:
 `{"status", "current": {"title", "since", "ref"}, "recent": [{"title", "done_at", "result": "ok|failed|queued"}], "usage": {...}, "capabilities": {"model", "skills", "tools"}}`.
+
+### Reviews, merges and deploys (v3)
+
+These three kinds are **validated**: a bad payload gets `400 {"ok":false,"error":"invalid review","details":["verdict: …"]}`
+and nothing is stored. (The original kinds above are never rejected, so existing agents keep working unchanged.)
+
+- `review`
+  - `pr` (required): `12`, `"#12"` or the PR URL. A URL also fills `repo`.
+  - `author_agent` (required): whose PR it is, e.g. `"hermes"`.
+  - `reviewer_agent`: defaults to the agent sending the report.
+  - `verdict`: `approved` · `changes_requested` · `commented` (default). Aliases: `approve`/`lgtm`, `request_changes`, `comment`.
+  - `findings[]`: `{"severity", "title", "file", "line"}`.
+    - `severity`: `critical` · `high` · `medium` · `low` · `nit` (aliases: `blocker`, `major`, `minor`, `info`).
+    - A plain string counts as a `medium` finding. Up to 50 per review.
+  - `summary`: up to 300 characters.
+  - `round`: a second review round of the same PR is `2`. Re-sending the same `repo`+`pr`+`reviewer`+`round` replaces that review, so retries are safe.
+  - `ts`: when the review happened (ISO or epoch ms). Defaults to now; future times are clamped to now.
+  - The trend draws one point per PR (all its reviews summed) for each author, so Hermes's line going down is fewer findings per PR.
+- `pr.merged`: `pr` or `title` is required. `merged_by` defaults to the sender. Re-sending the same PR replaces it.
+- `deploy`: `target` is required. `env` defaults to `production` and `status` to `success`.
+- `task.done` needs nothing new: every task that closes today shows in **מה השתנה היום** and in the agent's 7-day graph.
+
+### Stuck / silent alert and the 7-day graph
+
+- **Stuck** (תקוע): an agent has an open task, and nothing about that task arrived for more than **30 minutes**. Nothing means no `task.start`, `status` or `heartbeat` that names the task.
+- **Silent** (שקט): no open task, but the agent reports by heartbeat (or last said `working`/`blocked`) and has sent nothing for 30 minutes.
+- An agent that sent `{"kind":"status","status":"offline"}` is never flagged.
+- The threshold is one constant, `ALERT_AFTER_MIN` in `insights.js`.
+- Where it shows: a red ⚠ sign and a pulsing ring at the agent's desk, a red name tag, a banner above the agent list, the agent's card, and a red dot on the mobile **סוכנים** tab.
+- **7-day graph**: each agent's card shows tasks done (green) and failed (red) per day for the last 7 days (Israel time). It is built from `task.done`, `task.failed` and the heartbeat `recent[]` list, with nothing extra to send.
 
 Report only what is fine for Ori to read: task names, status, counts and capabilities — no prompts,
 credentials or internals. `model` is whatever name the agent wants shown (Tab reports `"Tab"`).
@@ -111,6 +146,20 @@ curl -sX POST $URL/api/ingest -H "Authorization: Bearer $TOKEN" -H 'Content-Type
 # capabilities
 curl -sX POST $URL/api/ingest -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"kind":"config","config":{"model":"Tab","skills":["research","websites","video"],"tools":["browser","phone"]}}'
+
+# a code review of Hermes's PR (sent by the reviewer)
+curl -sX POST $URL/api/ingest -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"review","pr":"https://github.com/delevski/agent-office-demo/pull/12","author_agent":"hermes","verdict":"changes_requested",
+       "findings":[{"severity":"high","title":"No timeout on the retry loop","file":"server/hub.js","line":40},{"severity":"nit","title":"Typo"}],
+       "summary":"Good base; needs a timeout and a test for 5xx."}'
+
+# a PR landed
+curl -sX POST $URL/api/ingest -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"pr.merged","pr":12,"repo":"delevski/agent-office-demo","title":"Review card","author_agent":"hermes"}'
+
+# a deploy
+curl -sX POST $URL/api/ingest -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"deploy","target":"agent-office","env":"production","version":"c5d6aa9","status":"success"}'
 
 # or everything at once
 curl -sX POST $URL/api/agents/instinct/heartbeat -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \

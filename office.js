@@ -639,14 +639,14 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     c.font = '800 46px Heebo, sans-serif';
     const name = ellipsize(c, ch.meta.name, 250);
     const nameW = c.measureText(name).width;
-    const sub = STATUS_LABEL[ch.status] || '';
+    const sub = ch.alert ? '⚠ ' + ch.alert.label : (STATUS_LABEL[ch.status] || '');
     c.font = '600 28px Heebo, sans-serif';
     const subW = ch.showStatus ? c.measureText(sub).width + 26 : 0;
     const inner = Math.max(nameW, subW);
     const w = Math.min(W - 8, inner + 128), x = (W - w) / 2;
-    c.fillStyle = ch.status === 'offline' ? 'rgba(30,27,22,.78)' : 'rgba(22,17,10,.9)';
+    c.fillStyle = ch.alert ? 'rgba(58,14,14,.94)' : ch.status === 'offline' ? 'rgba(30,27,22,.78)' : 'rgba(22,17,10,.9)';
     rr(c, x, 10, w, H - 20, (H - 20) / 2); c.fill();
-    c.strokeStyle = ch.meta.color; c.globalAlpha = ch.status === 'offline' ? 0.45 : 1; c.lineWidth = 4; c.stroke(); c.globalAlpha = 1;
+    c.strokeStyle = ch.alert ? '#ef4444' : ch.meta.color; c.globalAlpha = ch.status === 'offline' && !ch.alert ? 0.45 : 1; c.lineWidth = ch.alert ? 6 : 4; c.stroke(); c.globalAlpha = 1;
     drawEmblem(c, x + w - 100, 18, H - 36, ch.meta);
     c.direction = 'rtl'; c.textAlign = 'right'; c.textBaseline = 'middle';
     c.fillStyle = ch.status === 'offline' ? '#b9b2a4' : '#f7f1e6';
@@ -654,9 +654,9 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const tx = x + w - 112;
     c.fillText(name, tx, ch.showStatus ? H / 2 - 13 : H / 2 + 2);
     if (ch.showStatus) {
-      c.font = '600 28px Heebo, sans-serif'; c.fillStyle = '#cfc6b4';
+      c.font = (ch.alert ? '800' : '600') + ' 28px Heebo, sans-serif'; c.fillStyle = ch.alert ? '#fecaca' : '#cfc6b4';
       c.fillText(sub, tx - 22, H / 2 + 26);
-      c.fillStyle = STATUS_DOT[ch.status]; c.beginPath(); c.arc(tx - 8, H / 2 + 25, 7, 0, 7); c.fill();
+      c.fillStyle = ch.alert ? '#ef4444' : STATUS_DOT[ch.status]; c.beginPath(); c.arc(tx - 8, H / 2 + 25, 7, 0, 7); c.fill();
     }
     ch.tagTex.needsUpdate = true;
   }
@@ -670,6 +670,13 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
   const zzzTex = glyphTex('z', '#5b6b8c', '#eef2ff');
   const askTex = glyphTex('?', '#9a3412', '#fff1e6');
+  // stuck / silent alert: a red warning sign that floats beside the agent
+  const warnTex = canvasTex(128, 128, (c, w) => {
+    c.fillStyle = '#ef4444'; c.strokeStyle = '#fff'; c.lineWidth = 7; c.lineJoin = 'round';
+    c.beginPath(); c.moveTo(w / 2, 12); c.lineTo(w - 10, w - 18); c.lineTo(10, w - 18); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = '#fff'; c.font = '900 64px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('!', w / 2, w / 2 + 14);
+  });
   const steamTex = canvasTex(64, 64, (c, w) => {
     const g = c.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
     g.addColorStop(0, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
@@ -743,12 +750,17 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     // status bubble (z / ?)
     const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ map: zzzTex, transparent: true, depthWrite: false }));
     bubble.scale.set(0.34, 0.34, 1); bubble.position.set(0.38, 1.7, 0); bubble.visible = false; bubble.renderOrder = 15; g.add(bubble);
+    // alert: warning sign + pulsing red floor ring (hidden until setAlert)
+    const warn = new THREE.Sprite(new THREE.SpriteMaterial({ map: warnTex, transparent: true, depthTest: false, depthWrite: false }));
+    warn.scale.set(0.46, 0.46, 1); warn.position.set(-0.5, 1.62, 0); warn.visible = false; warn.renderOrder = 18; g.add(warn);
+    const alarm = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.05, 8, 48).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0, toneMapped: false, depthWrite: false }));
+    alarm.position.y = 0.04; alarm.visible = false; g.add(alarm);
     // focus ring + hit cylinder
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.035, 8, 40).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: meta.color, transparent: true, opacity: 0, toneMapped: false }));
     ring.position.y = 0.03; g.add(ring);
     const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 2.1, 8), new THREE.MeshBasicMaterial({ visible: false }));
     hit.position.y = 1.0; hit.userData.agentId = meta.id; g.add(hit);
-    return { g, meta, own, legs, torso, head, arms, eyes, mug, tag, tagCanvas, tagTex, bubble, ring, hit, emblemTex, blinkT: Math.random() * 4 };
+    return { g, meta, own, legs, torso, head, arms, eyes, mug, tag, tagCanvas, tagTex, bubble, warn, alarm, ring, hit, emblemTex, blinkT: Math.random() * 4, alert: null };
   }
 
   const agents = new Map();
@@ -1244,6 +1256,16 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     ch.ring.visible = ch.ring.material.opacity > 0.01;
     if (ch.focused) ch.ring.scale.setScalar(1 + Math.sin(t * 4) * 0.05);
     ch.ring.position.y = 0.03 - p.y;
+    // stuck / silent alert
+    ch.warn.visible = ch.alarm.visible = !!ch.alert;
+    if (ch.alert) {
+      const pulse = reduced ? 0.5 : (Math.sin(t * 5) + 1) / 2;
+      ch.warn.scale.setScalar(0.42 + pulse * 0.08);
+      ch.warn.position.y = 1.62 - p.y + (reduced ? 0 : Math.sin(t * 2.2) * 0.04);
+      ch.alarm.material.opacity = 0.35 + pulse * 0.5;
+      ch.alarm.scale.setScalar(1 + pulse * 0.12);
+      ch.alarm.position.y = 0.04 - p.y;
+    }
   }
   function standPose(ch) {
     ch.legs[0].rotation.x = ch.legs[1].rotation.x = 0;
@@ -1369,6 +1391,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       refreshMonitors();
     },
     setStatus(id, status) { const ch = agents.get(id); if (ch) setStatus(ch, status); },
+    setAlert(id, alert) { // {kind:'stuck'|'silent', label} or null
+      const ch = agents.get(id); if (!ch) return;
+      const next = alert ? { kind: alert.kind, label: String(alert.label || '') } : null;
+      if (JSON.stringify(next) === JSON.stringify(ch.alert)) return;
+      ch.alert = next; drawTag(ch);
+    },
     setState(id, state) { // v1 API, kept for the demo simulation
       const ch = agents.get(id); if (!ch) return;
       if (legacyState[state]) setStatus(ch, legacyState[state]);
