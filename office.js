@@ -639,9 +639,13 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     c.font = '800 46px Heebo, sans-serif';
     const name = ellipsize(c, ch.meta.name, 250);
     const nameW = c.measureText(name).width;
-    const sub = ch.alert ? '⚠ ' + ch.alert.label : (STATUS_LABEL[ch.status] || '');
+    const sub = ch.alert ? '⚠ ' + ch.alert.label
+      : ch.meetingLabel ? '👥 ' + ch.meetingLabel
+      : ch.activity && ch.status === 'working' ? '▸ ' + ch.activity
+      : (STATUS_LABEL[ch.status] || '');
     c.font = '600 28px Heebo, sans-serif';
-    const subW = ch.showStatus ? c.measureText(sub).width + 26 : 0;
+    const subText = ellipsize(c, sub, 300);
+    const subW = ch.showStatus ? c.measureText(subText).width + 26 : 0;
     const inner = Math.max(nameW, subW);
     const w = Math.min(W - 8, inner + 128), x = (W - w) / 2;
     c.fillStyle = ch.alert ? 'rgba(58,14,14,.94)' : ch.status === 'offline' ? 'rgba(30,27,22,.78)' : 'rgba(22,17,10,.9)';
@@ -655,7 +659,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     c.fillText(name, tx, ch.showStatus ? H / 2 - 13 : H / 2 + 2);
     if (ch.showStatus) {
       c.font = (ch.alert ? '800' : '600') + ' 28px Heebo, sans-serif'; c.fillStyle = ch.alert ? '#fecaca' : '#cfc6b4';
-      c.fillText(sub, tx - 22, H / 2 + 26);
+      c.fillText(subText, tx - 22, H / 2 + 26);
       c.fillStyle = ch.alert ? '#ef4444' : STATUS_DOT[ch.status]; c.beginPath(); c.arc(tx - 8, H / 2 + 25, 7, 0, 7); c.fill();
     }
     ch.tagTex.needsUpdate = true;
@@ -761,6 +765,31 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 2.1, 8), new THREE.MeshBasicMaterial({ visible: false }));
     hit.position.y = 1.0; hit.userData.agentId = meta.id; g.add(hit);
     return { g, meta, own, legs, torso, head, arms, eyes, mug, tag, tagCanvas, tagTex, bubble, warn, alarm, ring, hit, emblemTex, blinkT: Math.random() * 4, alert: null };
+  }
+
+  /* ---------------- handoff arcs: a glowing arc + a travelling dot from one desk to another ---------------- */
+  const arcs = [];
+  function handoffArc(from, to) {
+    const a = from.g.position.clone().setY(1.25), b = to.g.position.clone().setY(1.25);
+    const mid = a.clone().add(b).multiplyScalar(0.5); mid.y += 1.4 + a.distanceTo(b) * 0.18;
+    const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+    const col = new THREE.Color(from.meta.color);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.035, 6, false),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0, toneMapped: false, depthWrite: false }));
+    tube.renderOrder = 12; scene.add(tube);
+    const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: col, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    dot.scale.set(0.55, 0.55, 1); dot.renderOrder = 13; scene.add(dot);
+    arcs.push({ tube, dot, curve, t0: clockT, life: 3.2 });
+  }
+  function updateArcs() {
+    for (let i = arcs.length - 1; i >= 0; i--) {
+      const A = arcs[i], k = (clockT - A.t0) / A.life;
+      if (k >= 1) { scene.remove(A.tube); scene.remove(A.dot); A.tube.geometry.dispose(); A.tube.material.dispose(); A.dot.material.dispose(); arcs.splice(i, 1); continue; }
+      A.tube.material.opacity = Math.min(1, k * 6) * (k > 0.75 ? (1 - k) / 0.25 : 1) * 0.85;
+      const p = Math.min(1, k / 0.7);
+      A.dot.position.copy(A.curve.getPoint(p * p * (3 - 2 * p)));
+      A.dot.material.opacity = k > 0.85 ? (1 - k) / 0.15 : 1;
+    }
   }
 
   const agents = new Map();
@@ -1327,6 +1356,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       ch.tag.scale.set(tagH * (512 / 132), tagH, 1);
       ch.tag.position.y = 2.02 - ch.g.position.y;
     }
+    updateArcs();
     // monitors: scroll code while working, emit little pips
     for (const spot of deskSpots) {
       const m = spot.monitor, ch = m.owner;
@@ -1391,6 +1421,36 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       refreshMonitors();
     },
     setStatus(id, status) { const ch = agents.get(id); if (ch) setStatus(ch, status); },
+    setActivity(id, text) {
+      const ch = agents.get(id); if (!ch) return;
+      const t = text ? String(text) : '';
+      if ((ch.activity || '') === t) return;
+      ch.activity = t; drawTag(ch);
+    },
+    handoff(fromId, toId) {
+      const a = agents.get(fromId), b = agents.get(toId);
+      if (!a || !b || !a.g.visible || !b.g.visible || a === b) return false;
+      handoffArc(a, b); return true;
+    },
+    /** Meeting room: agents working on the same PR sit together on the rug; [{key, label, ids}] */
+    meetGroups(groups) {
+      const want = new Map();
+      (groups || []).forEach((g, gi) => g.ids.forEach((id, i) => want.set(id, { g, gi, i, n: g.ids.length })));
+      for (const ch of agents.values()) {
+        const w = want.get(ch.meta.id);
+        const key = w ? w.g.key : null;
+        if (key === (ch.meetKey || null) || !ch.g.visible) continue;
+        ch.meetKey = key; ch.meetingLabel = w ? w.g.label : '';
+        drawTag(ch);
+        if (w) {
+          // each group gets its own arc of the round table; members face its centre
+          const span = Math.PI * 2 / Math.max(1, groups.length);
+          const ang = w.gi * span + (w.i + 0.5) / w.n * span * 0.8 + 0.4;
+          const spot = new THREE.Vector3(MEET.x + Math.cos(ang) * 1.25, 0, MEET.z + Math.sin(ang) * 1.05);
+          walk(ch, spot, 'meeting', () => { ch.g.rotation.y = Math.atan2(MEET.x - ch.g.position.x, MEET.z - ch.g.position.z); });
+        } else goHome(ch);
+      }
+    },
     setAlert(id, alert) { // {kind:'stuck'|'silent', label} or null
       const ch = agents.get(id); if (!ch) return;
       const next = alert ? { kind: alert.kind, label: String(alert.label || '') } : null;

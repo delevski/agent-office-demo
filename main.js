@@ -1,8 +1,9 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=21';
+import { createOffice } from './office.js?v=22';
 import { emblemSVG } from './emblems.js';
-import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES } from './insights.js?v=21';
+import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups } from './insights.js';
+import { applyReport, publicView as viewAt, feedNote, isFeedEvent, emptyAgent } from './office-state.js';
 
 /* ---------------- page modes ---------------- */
 // /showcase or ?showcase=1 : public, embeddable, demo-only view (never calls the private API).
@@ -60,7 +61,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=21');
+    const r = await fetch('./roster.json?v=22');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -406,6 +407,7 @@ function connectLive() {
       if (m.type === 'event' && m.event) onLiveEvent(m.event);
       if (m.type === 'agent' && m.agent) onAgentUpdate(m.agent);
       if (m.type === 'review' && m.review) onReview(m.review);
+      if (m.type === 'handoff' && m.handoff && !replay.active && mode === 'live') office.handoff(m.handoff.from, m.handoff.to);
       if (m.type === 'change' && m.change) onChange(m.change);
     } catch {}
   };
@@ -419,7 +421,7 @@ async function apiGet(path) {
   return r.json();
 }
 async function pollEvents(first = false) {
-  if (!auth.loggedIn || mode !== 'live') return;
+  if (!auth.loggedIn || mode !== 'live' || replay.active) return;
   try {
     const d = await apiGet('./api/events?since=' + lastId);
     if (!d) return;
@@ -434,7 +436,7 @@ async function pollEvents(first = false) {
   } catch {}
 }
 async function loadAgents() {
-  if (!auth.loggedIn) return;
+  if (!auth.loggedIn || replay.active) return;
   try {
     const d = await apiGet('./api/agents');
     if (!d) return;
@@ -451,15 +453,16 @@ setInterval(() => loadAgents(), 30_000); // refreshes "offline" (10 min without 
 
 function onLiveEvent(ev) {
   if (typeof ev.id === 'number') { if (ev.id <= lastId) return; lastId = ev.id; }
-  if (mode !== 'live') return;
+  if (mode !== 'live' || replay.active) return;
   const a = liveAgentFor(ev.agent);
   applyEventToOffice(a, ev.kind || 'event', ev.value || '', ev.note || ev.kind);
 }
 
 const SCENE_STATE = { working: 'typing', idle: 'idle', blocked: 'idle', offline: 'idle' };
 function sceneStatus(view) { return !view || !view.hasData ? 'offline' : (['working', 'idle', 'blocked', 'offline'].includes(view.status) ? view.status : 'idle'); }
-function onAgentUpdate(view, { quiet = false } = {}) {
+function onAgentUpdate(view, { quiet = false, replaying = false } = {}) {
   if (!view || !view.id) return;
+  if (replay.active && !replaying) return; // the replay owns the room; live state is reloaded on exit
   const a = liveAgentFor(view.id, view.name);
   liveState.set(a.id, view);
   const st = statOf(a.id);
@@ -467,7 +470,9 @@ function onAgentUpdate(view, { quiet = false } = {}) {
   st.events = Math.max(st.events, view.events || 0);
   if (view.current?.title) st.last = view.current.title;
   office.setStatus(a.id, sceneStatus(view));
+  office.setActivity(a.id, view.activity?.text || '');
   applyAlert(a);
+  scheduleMeetings();
   refreshWorld();
   if (quiet || mode !== 'live') return;
   renderKpis();
@@ -509,8 +514,8 @@ function createLiveAgent(handle, name) {
 
 /* ---------------- live agent panel ---------------- */
 const STATUS_HE = { working: 'עובד עכשיו', idle: 'פנוי', blocked: 'תקוע · ממתין', offline: 'לא מחובר' };
-const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔', queued: '🗂️' };
-const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור' };
+const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔', queued: '🗂️', handed: '↪️' };
+const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור', handed: 'הועבר' };
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -522,10 +527,11 @@ function fmtNum(n) {
   return n.toLocaleString('he-IL');
 }
 function fmtCost(n) { n = Number(n) || 0; return '$' + (n >= 100 ? n.toFixed(0) : n.toFixed(2)); }
+function nowRef() { return replay.active ? replay.t : Date.now(); }
 function hhmm(ts) { return new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', hour12: false }); }
 function ago(ts) {
   if (!ts) return '';
-  const s = (Date.now() - ts) / 1000;
+  const s = Math.max(0, nowRef() - ts) / 1000;
   if (s < 60) return 'עכשיו';
   if (s < 3600) return `לפני ${Math.round(s / 60)} דק׳`;
   if (s < 86400) return `לפני ${Math.round(s / 3600)} שע׳`;
@@ -533,7 +539,7 @@ function ago(ts) {
 }
 function when(ts) {
   if (!ts) return '';
-  return Date.now() - ts < 86400_000 ? hhmm(ts) : new Date(ts).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+  return nowRef() - ts < 86400_000 ? hhmm(ts) : new Date(ts).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
 }
 function statusOf(v) { return !v || !v.hasData ? 'nodata' : v.status; }
 function liveCountLabel() {
@@ -543,12 +549,14 @@ function liveCountLabel() {
 function liveListItem(a) {
   const v = liveState.get(a.id);
   const st = statusOf(v);
-  const line = st === 'nodata' ? 'אין נתונים עדיין' : v.current?.title ? v.current.title : (STATUS_HE[st] + (v.lastSeen ? ' · ' + ago(v.lastSeen) : ''));
+  const line = st === 'nodata' ? 'אין נתונים עדיין' : v.activity?.text ? '▸ ' + v.activity.text : v.current?.title ? v.current.title : (STATUS_HE[st] + (v.lastSeen ? ' · ' + ago(v.lastSeen) : ''));
   const al = alertOf(v);
+  const mt = v?.meter && v.meter.level !== 'ok' ? v.meter : null;
   return `<div class="ag-item${al ? ' ag-alert' : ''}" data-id="${esc(a.id)}" role="button" tabindex="0">
     <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
     <div class="grow"><div style="font-weight:800;font-size:.88rem">${esc(a.name)} · <span class="muted">${esc(a.role)}</span></div>
     <div class="ag-last">${esc(line)}</div></div>
+    ${mt ? `<span class="mt-chip mt-${mt.level}" title="${esc(meterText(mt))}">💸 ${Math.round(mt.pct)}%</span>` : ''}
     ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">⚠ ${esc(alertLabel(al))}</span>`
       : `<span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>`}
   </div>`;
@@ -573,11 +581,12 @@ function livePanelHtml(a) {
   const cur = v.current;
   const currentHtml = cur?.title
     ? `<div class="ap-current">${safeUrl(cur.link) ? `<a href="${safeUrl(cur.link)}" target="_blank" rel="noopener">${esc(cur.title)} ↗</a>` : `<span>${esc(cur.title)}</span>`}
+         ${v.activity?.text ? `<div class="ap-activity">▸ ${esc(v.activity.text)}</div>` : ''}
          ${cur.since ? `<div class="muted">מאז ${when(cur.since)} · ${ago(cur.since)}</div>` : ''}</div>`
     : `<div class="ap-current ap-current-none">${st === 'offline' ? 'לא מחובר כרגע' : 'אין משימה פעילה כרגע'}</div>`;
   const u = v.usageToday;
   const has = f => u && u[f] !== undefined;
-  const usageHtml = u
+  const usageHtml = (v.meter ? meterHtml(v.meter) : '') + (u
     ? `<div class="u-grid">
         ${usageTile('הודעות', has('messages') ? fmtNum(u.messages) : '—')}
         ${usageTile('טוקנים', has('tokens') ? fmtNum(u.tokens) : '—')}
@@ -585,12 +594,12 @@ function livePanelHtml(a) {
         ${usageTile('משימות', has('tasks') ? fmtNum(u.tasks) : '—')}
       </div>${has('pct_of_quota') ? `<div class="u-quota"><span style="width:${Math.min(100, u.pct_of_quota)}%"></span></div><div class="muted">${fmtNum(u.pct_of_quota)}% מהמכסה היומית</div>` : ''}
       ${u.updated ? `<div class="muted ap-upd">דווח ${ago(u.updated)}</div>` : ''}`
-    : `<div class="ap-empty-line">לא דווח שימוש היום</div>`;
+    : `<div class="ap-empty-line">לא דווח שימוש היום</div>`);
   const tasks = v.tasks || [];
   const tasksHtml = tasks.length
     ? `<ul class="ap-tasks">${tasks.slice(0, 8).map(t => `
         <li title="${TASK_HE[t.status] || ''}"><span class="t-ico" aria-label="${TASK_HE[t.status] || ''}">${TASK_ICON[t.status] || '•'}</span>
-          <span class="grow">${safeUrl(t.link) ? `<a href="${safeUrl(t.link)}" target="_blank" rel="noopener">${esc(t.title || t.id)}</a>` : esc(t.title || t.id)}</span>
+          <span class="grow">${safeUrl(t.link) ? `<a href="${safeUrl(t.link)}" target="_blank" rel="noopener">${esc(t.title || t.id)}</a>` : esc(t.title || t.id)}${chainHtml(t)}</span>
           <span class="muted">${when(t.ended || t.since)}</span></li>`).join('')}</ul>`
     : `<div class="ap-empty-line">עוד אין משימות</div>`;
   const c = v.config;
@@ -616,7 +625,7 @@ function livePanelHtml(a) {
 
 /* ---------------- 3. stuck / silent alerts ---------------- */
 const alertShown = new Map(); // id -> alert kind already toasted
-function alertOf(v) { return v ? agentAlert(v, Date.now()) : null; }
+function alertOf(v) { return v ? agentAlert(v, nowRef()) : null; }
 function alertTitle(al) {
   if (!al) return '';
   return al.kind === 'stuck'
@@ -640,7 +649,7 @@ function alertBannerHtml() {
 function applyAlert(a) {
   const al = mode === 'live' ? alertOf(liveState.get(a.id)) : null;
   office.setAlert(a.id, al ? { kind: al.kind, label: alertLabel(al) } : null);
-  if (al && alertShown.get(a.id) !== al.kind && mode === 'live') toast(`⚠ ${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
+  if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`⚠ ${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
   if (al) alertShown.set(a.id, al.kind); else alertShown.delete(a.id);
   return al;
 }
@@ -690,7 +699,7 @@ async function loadReviews() {
   try { const d = await apiGet('./api/reviews'); if (d) { reviews = d.reviews || []; afterReviews(); } } catch (e) { console.warn(e); }
 }
 function onReview(r) {
-  if (mode !== 'live') return;
+  if (mode !== 'live' || replay.active) return;
   const i = reviews.findIndex(x => x.id === r.id);
   if (i >= 0) reviews[i] = r; else reviews.push(r);
   reviews.sort((a, b) => a.ts - b.ts);
@@ -793,7 +802,7 @@ function renderReviewOverlay() {
 }
 
 /* ---------------- 4. what changed today ---------------- */
-let changesToday = [], changesDay = '';
+let changesToday = [], changesDay = '', changesShown = null;
 const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅' };
 async function loadChanges() {
   if (!auth.loggedIn || mode !== 'live') return;
@@ -801,7 +810,7 @@ async function loadChanges() {
 }
 function todayKey() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date()); }
 function onChange(c) {
-  if (mode !== 'live') return;
+  if (mode !== 'live' || replay.active) return;
   if (new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date(c.ts)) !== todayKey()) return;
   changesToday = [c, ...changesToday.filter(x => x.id !== c.id)].sort((a, b) => b.ts - a.ts);
   renderChanges();
@@ -816,11 +825,12 @@ function changeLine(c) {
 }
 function renderChanges() {
   const el = $('#changes-list'); if (!el) return;
+  const list = replay.active && changesShown ? changesShown : changesToday;
   const counts = { 'pr.merged': 0, deploy: 0, 'task.done': 0 };
-  changesToday.forEach(c => { if (counts[c.type] !== undefined) counts[c.type]++; });
-  $('#changes-sub').textContent = changesToday.length ? `${counts['pr.merged']} מיזוגים · ${counts.deploy} פריסות · ${counts['task.done']} משימות` : 'היום';
-  if (!changesToday.length) { el.innerHTML = `<div class="ch-empty">עוד לא השתנה כלום היום. מיזוגים, פריסות ומשימות שנסגרו יופיעו כאן.</div>`; return; }
-  el.innerHTML = changesToday.map(c => {
+  list.forEach(c => { if (counts[c.type] !== undefined) counts[c.type]++; });
+  $('#changes-sub').textContent = list.length ? `${counts['pr.merged']} מיזוגים · ${counts.deploy} פריסות · ${counts['task.done']} משימות` : 'היום';
+  if (!list.length) { el.innerHTML = `<div class="ch-empty">עוד לא השתנה כלום היום. מיזוגים, פריסות ומשימות שנסגרו יופיעו כאן.</div>`; return; }
+  el.innerHTML = list.map(c => {
     const a = agentMeta(c.merged_by || c.agent);
     const body = changeLine(c);
     return `<li class="ch-item ch-${c.type.replace('.', '-')}">
@@ -830,6 +840,173 @@ function renderChanges() {
   }).join('');
 }
 setInterval(() => { if (mode === 'live') { loadChanges(); loadReviews(); } }, 60_000);
+
+
+/* ---------------- B3. handoff chain ---------------- */
+function chainHtml(t, card = false) {
+  const chain = (t.chain || []).filter(Boolean);
+  if (!chain.length) return '';
+  const names = [...chain.map(nameOf), card ? t.agent?.name : null].filter(Boolean);
+  return `<div class="${card ? 'kb-chain' : 'ap-chain'}" title="מי העביר את המשימה"><span dir="ltr">${names.map(esc).join(' → ')}</span></div>`;
+}
+
+/* ---------------- B4. cost / token meter ---------------- */
+const METER_FIELD = { cost: 'עלות', tokens: 'טוקנים', messages: 'הודעות' };
+function meterVal(f, n) { return f === 'cost' ? fmtCost(n) : fmtNum(n); }
+function meterText(mt) { return `${METER_FIELD[mt.field]} היום ${meterVal(mt.field, mt.used)} מתוך ${meterVal(mt.field, mt.limit)} · ${Math.round(mt.pct)}%`; }
+function meterHtml(mt) {
+  return `<div class="mt mt-${mt.level}">
+    <div class="mt-row"><span>${mt.level === 'over' ? '🔴 חרג מהתקציב' : mt.level === 'warn' ? '🟠 קרוב לתקציב' : 'תקציב יומי'}</span><span class="mt-num" dir="ltr">${esc(meterVal(mt.field, mt.used))} / ${esc(meterVal(mt.field, mt.limit))}</span></div>
+    <div class="mt-bar"><span style="width:${Math.min(100, mt.pct)}%"></span></div>
+    <div class="muted">${esc(METER_FIELD[mt.field])} · ${Math.round(mt.pct)}% מהתקציב היומי</div></div>`;
+}
+
+/* ---------------- B6. meeting room ---------------- */
+let meetTimer = null, lastMeetSig = '';
+function scheduleMeetings() { if (!meetTimer) meetTimer = setTimeout(() => { meetTimer = null; refreshMeetings(); }, 300); }
+function refreshMeetings() {
+  if (!office) return;
+  const groups = mode === 'live' ? meetingGroups(LIVE.map(a => liveState.get(a.id)).filter(Boolean)) : [];
+  office.meetGroups(groups); // idempotent: only agents whose table changed get up
+  const sig = JSON.stringify(groups);
+  if (sig === lastMeetSig) return;
+  const before = lastMeetSig ? JSON.parse(lastMeetSig) : [];
+  lastMeetSig = sig;
+  if (!replay.active && mode === 'live') for (const g of groups) if (!before.some(b => b.key === g.key && b.ids.length >= g.ids.length))
+    toast(`👥 ${g.ids.map(nameOf).join(', ')} עברו לחדר הישיבות · ${g.label}`);
+}
+
+/* ---------------- B5. morning summary ---------------- */
+async function openSummary() {
+  openOverlay('#summary-ov');
+  $('#summary-text').textContent = 'טוען…';
+  try {
+    const r = await fetch('./api/summary', { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) throw new Error('summary ' + r.status);
+    const s = await r.json();
+    $('#summary-text').textContent = s.text;
+    $('#summary-sub').textContent = `מ-${hhmm(s.since)} עד ${hhmm(s.until)} · מוכן לשליחה`;
+  } catch (e) { $('#summary-text').textContent = 'לא הצלחנו לטעון את הסיכום. אפשר לנסות שוב.'; }
+}
+$('#btn-summary')?.addEventListener('click', openSummary);
+$('#summary-copy')?.addEventListener('click', e => {
+  withBusy(e.currentTarget, 'מעתיק…', async () => { await navigator.clipboard.writeText($('#summary-text').textContent); toast('הסיכום הועתק'); });
+});
+
+/* ---------------- B2. day replay ---------------- */
+// The room, the board, the feed and "what changed today" run from the day's stored reports through the
+// very same reducer the server uses (office-state.js), so the replay shows exactly what happened, when.
+const replay = { active: false, data: null, t: 0, t0: 0, t1: 0, states: new Map(), idx: 0, playing: false, speed: 60, raf: 0, lastFrame: 0, lastView: 0 };
+const REPLAY_SPEEDS = [10, 60, 600];
+function cloneSnap(snap) { const m = new Map(); for (const [id, s] of Object.entries(snap || {})) m.set(id, structuredClone({ usage: {}, ...s })); return m; }
+async function enterReplay() {
+  if (mode !== 'live' || replay.active) return;
+  const btn = $('#btn-replay');
+  withBusy(btn, 'טוען…', async () => {
+    const d = await apiGet('./api/replay');
+    if (!d) return;
+    const reports = (d.reports || []).slice().sort((a, b) => a.ts - b.ts);
+    if (!reports.length) { toast('עוד אין אירועים היום לשחזור'); return; }
+    Object.assign(replay, { active: true, data: { ...d, reports }, playing: false, idx: 0 });
+    replay.t0 = Math.max(d.start, reports[0].ts - 5 * 60_000);
+    replay.t1 = Math.min(d.end, Math.max(d.now, reports[reports.length - 1].ts + 60_000));
+    document.body.classList.add('is-replay');
+    $('#replay-bar').classList.remove('hidden');
+    const sl = $('#replay-slider'); sl.min = 0; sl.max = 1000; sl.value = 0;
+    $('#replay-from').textContent = hhmm(replay.t0); $('#replay-to').textContent = hhmm(replay.t1);
+    selectedId = null; office.unfocus();
+    replaySeek(replay.t0);
+    replayPlay(true);
+  });
+}
+function exitReplay() {
+  if (!replay.active) return;
+  replayPlay(false);
+  replay.active = false; replay.data = null; replay.states = new Map();
+  document.body.classList.remove('is-replay');
+  $('#replay-bar').classList.add('hidden');
+  liveState.clear();
+  lastMeetSig = '';
+  $('#log').innerHTML = '';
+  loadAgents().then(() => pollEvents(true));
+  loadChanges();
+  refreshWorld(true);
+}
+function replayRender(full = false) {
+  const t = replay.t;
+  // agents with nothing yet at this moment show as "no data", not with their live numbers
+  const ids = new Set([...LIVE.map(a => a.id), ...replay.states.keys()]);
+  for (const id of ids) {
+    const s = replay.states.get(id) || { ...emptyAgent(id, replay.t0), firstSeen: replay.t0 };
+    const a = liveAgentFor(id, s.name);
+    const v = viewAt(s, t);
+    liveState.set(a.id, v);
+    onAgentUpdate(v, { quiet: !full, replaying: true });
+  }
+  renderKpis();
+  if (selectedId) { const a = findAgent(selectedId); if (a) renderPanel(a); } else renderPanelDefault();
+  changesShown = changesToday.filter(c => c.ts <= t);
+  renderChanges();
+  refreshMeetings();
+  refreshWorld(true);
+  $('#replay-time').textContent = new Date(t).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  $('#replay-slider').value = Math.round((t - replay.t0) / Math.max(1, replay.t1 - replay.t0) * 1000);
+}
+function replayApply(r, animate) {
+  const prev = replay.states.get(r.agent);
+  replay.states.set(r.agent, applyReport(prev, r, r.ts));
+  if (!isFeedEvent(r)) return;
+  const a = liveAgentFor(r.agent, r.name);
+  if (animate) {
+    logLine(a, r.kind, r.value || '', feedNote(r), r.ts);
+    if (r.kind === 'task.done' && r.taskStatus !== 'failed') office.celebrate(a.id);
+    if (r.kind === 'handoff' && r.handoff) office.handoff(r.handoff.from, r.handoff.to);
+    if (r.from_agent && /^task\.(start|queued)$/.test(r.kind)) office.handoff(r.from_agent, r.agent);
+  }
+}
+function replaySeek(t) {
+  replay.t = Math.max(replay.t0, Math.min(replay.t1, t));
+  replay.states = cloneSnap(replay.data.snapshot);
+  const reps = replay.data.reports;
+  let i = 0;
+  for (; i < reps.length && reps[i].ts <= replay.t; i++) replayApply(reps[i], false);
+  replay.idx = i;
+  // the log shows the last lines up to this moment
+  $('#log').innerHTML = '';
+  reps.slice(0, i).filter(isFeedEvent).slice(-15).forEach(r => logLine(liveAgentFor(r.agent, r.name), r.kind, r.value || '', feedNote(r), r.ts));
+  replayRender(true);
+}
+function replayStep(now) {
+  if (!replay.active || !replay.playing) return;
+  const dt = Math.min(0.1, (now - (replay.lastFrame || now)) / 1000);
+  replay.lastFrame = now;
+  replay.t = Math.min(replay.t1, replay.t + dt * 1000 * replay.speed);
+  const reps = replay.data.reports;
+  let changed = false;
+  while (replay.idx < reps.length && reps[replay.idx].ts <= replay.t) { replayApply(reps[replay.idx], true); replay.idx++; changed = true; }
+  if (changed || now - replay.lastView > 400) { replay.lastView = now; replayRender(changed); }
+  if (replay.t >= replay.t1) { replayPlay(false); return; }
+  replay.raf = requestAnimationFrame(replayStep);
+}
+function replayPlay(on) {
+  replay.playing = on && replay.t < replay.t1;
+  cancelAnimationFrame(replay.raf);
+  $('#replay-play').textContent = replay.playing ? '⏸' : '▶';
+  $('#replay-play').setAttribute('aria-label', replay.playing ? 'השהיה' : 'ניגון');
+  if (replay.playing) { replay.lastFrame = 0; replay.raf = requestAnimationFrame(replayStep); }
+}
+$('#btn-replay')?.addEventListener('click', enterReplay);
+$('#replay-exit')?.addEventListener('click', exitReplay);
+$('#replay-play')?.addEventListener('click', () => { if (replay.t >= replay.t1) replaySeek(replay.t0); replayPlay(!replay.playing); });
+$('#replay-speed')?.addEventListener('click', e => {
+  replay.speed = REPLAY_SPEEDS[(REPLAY_SPEEDS.indexOf(replay.speed) + 1) % REPLAY_SPEEDS.length];
+  e.currentTarget.textContent = '×' + replay.speed;
+});
+$('#replay-slider')?.addEventListener('input', e => {
+  const k = Number(e.currentTarget.value) / 1000;
+  replaySeek(replay.t0 + k * (replay.t1 - replay.t0));
+});
+window.__replay = { enter: enterReplay, exit: exitReplay, seek: t => replaySeek(t), play: on => replayPlay(on), state: () => ({ active: replay.active, t: replay.t, t0: replay.t0, t1: replay.t1, idx: replay.idx, n: replay.data?.reports.length || 0 }), speed: s => { replay.speed = s; $('#replay-speed').textContent = '×' + s; } };
 
 /* ---------------- login (Ori only) ---------------- */
 async function checkAuth() {
@@ -1042,7 +1219,7 @@ function boardData() {
   for (const a of LIVE) {
     const v = liveState.get(a.id);
     for (const t of v?.tasks || []) {
-      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0 };
+      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to };
       card.when = card.ts ? when(card.ts) : '';
       if (t.status === 'running') cols.doing.push(card);
       else if (t.status === 'queued' || t.status === 'blocked') cols.todo.push(card);
@@ -1094,7 +1271,7 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : ''}${c.when ? ' · ' + esc(c.when) : ''}</div></div>
+        <div class="kb-meta">${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');

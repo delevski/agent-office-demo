@@ -132,3 +132,127 @@ export function changesForDay(changes, agents, day, limit = 60) {
   }
   return out.sort((x, y) => y.ts - x.ts).slice(0, limit);
 }
+
+
+/* ---------------- B4. cost / token meter ---------------- */
+export const BUDGET_FIELDS = ['cost', 'tokens', 'messages'];
+export const BUDGET_WARN = 0.8; // amber from 80% of the daily budget, red over 100%
+/** The tightest of the budgets the agent set: {field, used, limit, pct, level: 'ok'|'warn'|'over'} or null. */
+export function budgetMeter(usage, budget) {
+  if (!budget) return null;
+  let best = null;
+  for (const f of BUDGET_FIELDS) {
+    if (!(budget[f] > 0)) continue;
+    const used = Number(usage?.[f]) || 0;
+    const pct = used / budget[f];
+    if (!best || pct > best.pct) best = { field: f, used, limit: budget[f], pct };
+  }
+  if (!best) return null;
+  best.level = best.pct > 1 ? 'over' : best.pct >= BUDGET_WARN ? 'warn' : 'ok';
+  best.pct = Math.round(best.pct * 1000) / 10;
+  return best;
+}
+
+/* ---------------- B6. meeting room ---------------- */
+/** "owner/repo#12" for a PR link, "owner/repo" for a repo link, '' otherwise. */
+export function refKey(link) {
+  const s = String(link || '');
+  const pr = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i.exec(s);
+  if (pr) return `${pr[1].toLowerCase()}#${pr[2]}`;
+  const repo = /github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?(?:[/?#]|$)/i.exec(s);
+  return repo ? repo[1].toLowerCase() : '';
+}
+/** Agents (views) that are working on the same PR / repo right now: [{key, label, ids}] with 2+ agents each. */
+export function meetingGroups(views) {
+  const by = new Map();
+  for (const v of views || []) {
+    if (!v || !v.current || v.status === 'offline') continue;
+    const key = refKey(v.current.link);
+    if (!key) continue;
+    if (!by.has(key)) by.set(key, []);
+    by.get(key).push(v.id);
+  }
+  return [...by.entries()].filter(([, ids]) => ids.length >= 2)
+    .map(([key, ids]) => ({ key, label: key.includes('#') ? 'PR #' + key.split('#')[1] : key.split('/')[1], ids: ids.sort() }))
+    .sort((a, b) => b.ids.length - a.ids.length || a.key.localeCompare(b.key));
+}
+
+/* ---------------- B5. morning summary ---------------- */
+/** Office-zone offset from UTC (ms) at instant t. */
+function zoneOffset(t) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(t)).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(t / 1000) * 1000;
+}
+/** The UTC instant of a wall-clock time in the office zone (DST-safe). */
+export function zoneTime(y, m, d, h = 0, min = 0) {
+  const wall = Date.UTC(y, m - 1, d, h, min);
+  let t = wall - zoneOffset(wall);
+  t = wall - zoneOffset(t);
+  return t;
+}
+/** Default "overnight" window start: 18:00 office time of the previous day. */
+export function overnightSince(now = Date.now()) {
+  const [y, m, d] = dayOf(now).split('-').map(Number);
+  return zoneTime(y, m, d - 1, 18);
+}
+const fmtTime = ts => new Intl.DateTimeFormat('he-IL', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts));
+/**
+ * Digest of what happened between since and until. agents: [{id, name, tasks[], alert}] (public views),
+ * changes: change log, reviews: review list. Returns {since, until, counts, agents[], merged[], deploys[], reviews[], alerts[], text}.
+ */
+export function buildSummary({ agents = [], changes = [], reviews = [], since, until = Date.now() }) {
+  const inWin = ts => ts && ts >= since && ts <= until;
+  const cap = s => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
+  const name = id => cap(agents.find(a => a.id === id)?.name || id);
+  const per = agents.map(a => {
+    const done = (a.tasks || []).filter(t => t.status === 'done' && inWin(t.ended));
+    const failed = (a.tasks || []).filter(t => t.status === 'failed' && inWin(t.ended));
+    return { id: a.id, name: cap(a.name || a.id), done: done.map(t => t.title || t.id), failed: failed.map(t => t.title || t.id), now: a.current?.title || '' };
+  }).filter(a => a.done.length || a.failed.length || a.now);
+  const merged = changes.filter(c => c.type === 'pr.merged' && inWin(c.ts)).sort((a, b) => a.ts - b.ts)
+    .map(c => ({ pr: c.pr, repo: c.repo, title: c.title, link: c.link, by: c.merged_by || c.agent, ts: c.ts }));
+  const deploys = changes.filter(c => c.type === 'deploy' && inWin(c.ts)).sort((a, b) => a.ts - b.ts)
+    .map(c => ({ target: c.target, env: c.env, version: c.version, status: c.status, ts: c.ts }));
+  const revs = reviews.filter(r => inWin(r.ts)).sort((a, b) => a.ts - b.ts)
+    .map(r => ({ pr: r.pr, repo: r.repo, author: r.author_agent, reviewer: r.reviewer_agent, verdict: r.verdict, findings: (r.findings || []).length, ts: r.ts }));
+  const alerts = agents.filter(a => a.alert).map(a => ({ id: a.id, name: cap(a.name || a.id), kind: a.alert.kind, minutes: a.alert.minutes, task: a.alert.task }));
+  const counts = {
+    tasks_done: per.reduce((s, a) => s + a.done.length, 0), tasks_failed: per.reduce((s, a) => s + a.failed.length, 0),
+    prs_merged: merged.length, deploys: deploys.length, deploys_failed: deploys.filter(d => d.status !== 'success').length,
+    reviews: revs.length, alerts: alerts.length,
+  };
+  const L = [];
+  L.push(`☀️ סיכום משרד הסוכנים · ${fmtTime(since)}–${fmtTime(until)}`);
+  if (!counts.tasks_done && !counts.tasks_failed && !merged.length && !deploys.length && !revs.length && !alerts.length) {
+    L.push('שקט בלילה: לא נסגרו משימות, לא היו מיזוגים או פריסות.');
+  } else {
+    const head = [
+      counts.tasks_done && (counts.tasks_done === 1 ? 'משימה אחת הושלמה' : `${counts.tasks_done} משימות הושלמו`),
+      counts.tasks_failed && `${counts.tasks_failed} נכשלו`,
+      merged.length && (merged.length === 1 ? 'PR אחד מוזג' : `${merged.length} PRs מוזגו`),
+      deploys.length && (deploys.length === 1 ? 'פריסה אחת' : `${deploys.length} פריסות`) + (counts.deploys_failed ? ` (${counts.deploys_failed} נכשלו)` : ''),
+      revs.length && (revs.length === 1 ? 'ביקורת אחת' : `${revs.length} ביקורות`),
+    ].filter(Boolean);
+    if (head.length) L.push(head.join(' · '));
+    for (const a of per) {
+      const parts = [];
+      if (a.done.length) parts.push(`סיים ${a.done.length}: ${a.done.slice(0, 3).join(', ')}${a.done.length > 3 ? '…' : ''}`);
+      if (a.failed.length) parts.push(`נכשל ${a.failed.length}`);
+      if (a.now) parts.push(`עכשיו: ${a.now}`);
+      L.push(`• ${a.name} — ${parts.join(' · ')}`);
+    }
+    for (const m of merged) L.push(`🔀 מוזג PR #${m.pr}${m.title ? ' ' + m.title : ''}${m.repo ? ` (${m.repo})` : ''}`);
+    for (const d of deploys) L.push(`${d.status === 'success' ? '🚀' : '⚠️'} פריסה ${d.target} → ${d.env}${d.version ? ' ' + d.version : ''}${d.status === 'success' ? '' : ' · ' + d.status}`);
+    for (const r of revs) L.push(`🔍 ${name(r.reviewer)} ביקר את PR #${r.pr} של ${name(r.author)}: ${r.findings} ממצאים (${r.verdict})`);
+    for (const a of alerts) L.push(`⚠ ${a.name} ${a.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(a.minutes)}${a.task ? ` · ${a.task}` : ''}`);
+  }
+  return { since, until, counts, agents: per, merged, deploys, reviews: revs, alerts, text: L.join('\n') };
+}
+
+/* ---------------- B2. day replay ---------------- */
+/** Office-day bounds [start, end) in ms for a YYYY-MM-DD day (a DST day is 23 or 25 hours long). */
+export function dayBounds(day) {
+  const [y, m, d] = day.split('-').map(Number);
+  return [zoneTime(y, m, d), zoneTime(y, m, d + 1)];
+}

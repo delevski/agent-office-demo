@@ -10,6 +10,8 @@
 //   GET  /api/events?since=N         (session) polling fallback / catch-up
 //   GET  /api/reviews[?author=id]    (session) code reviews (kind "review")
 //   GET  /api/changes[?day=YYYY-MM-DD] (session) what changed today: merged PRs, deploys, closed tasks
+//   GET  /api/replay[?day=YYYY-MM-DD]  (session) the day's reports + a start-of-day snapshot, for the replay
+//   GET  /api/summary[?since=ISO|ms][&format=text] (session OR any agent token) the overnight digest
 //   GET  /api/ws                     (session) WebSocket live stream
 //   GET  /showcase                   public, embeddable demo-only view (same page, ?showcase mode)
 //   everything else                  -> static assets (the site; demo mode needs no login)
@@ -101,6 +103,15 @@ export default {
       return privateJson({ loggedIn: await isLoggedIn(request, env), loginConfigured: loginConfigured(env) });
     }
 
+    /* ---- morning summary: Ori, or any agent / cron holding a write token (to post it somewhere) ---- */
+    if (path === '/api/summary' && request.method === 'GET') {
+      if (!(await isLoggedIn(request, env)) && !writerFor(request, env).ok) return privateJson({ ok: false, error: 'login or agent token required' }, 401);
+      const qs = new URLSearchParams(url.search);
+      qs.set('known', tokenAgents(env).join(','));
+      const res = await hub(env).fetch('https://hub/summary?' + qs.toString());
+      return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/json', 'Cache-Control': 'no-store' } });
+    }
+
     /* ---- private reads: Ori only ---- */
     if (path.startsWith('/api/')) {
       if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
@@ -111,7 +122,7 @@ export default {
         const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
-      if (path === '/api/reviews' || path === '/api/changes') {
+      if (path === '/api/reviews' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
         const res = await hub(env).fetch('https://hub' + path.slice(4) + (url.search || ''));
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
