@@ -1,9 +1,13 @@
 // server/hub.js — the one Durable Object (SQLite-backed, free plan) behind the office.
 // Storage keys:  events, seq (feed, unchanged)  ·  agent:<id> (per-agent live state)
+//                reviews (code reviews, newest last)  ·  changes (merged PRs, deploys, closed tasks)
 //                fail:<ip> (login throttle)
-import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent } from './agents.js';
+import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent, newlyDone, dayOf } from './agents.js';
+import { changesForDay } from '../insights.js';
 
 const FEED_MAX = 200;
+const REVIEWS_MAX = 300;
+const CHANGES_MAX = 400;
 const LOGIN_MAX_FAILS = 8;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
@@ -17,6 +21,8 @@ export class EventHub {
     this.state.blockConcurrencyWhile(async () => {
       this.events = (await this.state.storage.get('events')) || [];
       this.seq = (await this.state.storage.get('seq')) || 0;
+      this.reviews = (await this.state.storage.get('reviews')) || [];
+      this.changes = (await this.state.storage.get('changes')) || [];
       this.agents = new Map();
       const rows = await this.state.storage.list({ prefix: 'agent:' });
       for (const [k, v] of rows) this.agents.set(k.slice(6), v);
@@ -28,6 +34,14 @@ export class EventHub {
     for (const ws of this.state.getWebSockets()) {
       try { ws.send(msg); } catch { /* dropped */ }
     }
+  }
+
+  /** Insert or replace by id, keep time order, cap the list. */
+  static upsert(list, item, max) {
+    const i = list.findIndex(x => x.id === item.id);
+    if (i >= 0) list[i] = item; else list.push(item);
+    list.sort((a, b) => a.ts - b.ts);
+    return list.length > max ? list.slice(-max) : list;
   }
 
   async fetch(request) {
@@ -54,8 +68,21 @@ export class EventHub {
         if (this.events.length > FEED_MAX) this.events = this.events.slice(-FEED_MAX);
         Object.assign(writes, { events: this.events, seq: this.seq });
       }
+      // reviews and the "what changed today" log
+      const newChanges = [];
+      if (r.kind === 'review' && r.review) {
+        this.reviews = EventHub.upsert(this.reviews, r.review, REVIEWS_MAX);
+        writes.reviews = this.reviews;
+      }
+      if ((r.kind === 'pr.merged' || r.kind === 'deploy') && r.change) newChanges.push(r.change);
+      for (const t of newlyDone(prev, next))
+        newChanges.push({ id: `task:${r.agent}:${t.id || t.title}`, type: 'task.done', agent: r.agent, title: t.title || t.id, link: t.link || '', ts: t.ended });
+      for (const c of newChanges) this.changes = EventHub.upsert(this.changes, c, CHANGES_MAX);
+      if (newChanges.length) writes.changes = this.changes;
       await this.state.storage.put(writes);
       if (ev) this.broadcast({ type: 'event', event: ev });
+      if (r.kind === 'review' && r.review) this.broadcast({ type: 'review', review: r.review });
+      for (const c of newChanges) this.broadcast({ type: 'change', change: c });
       this.broadcast({ type: 'agent', agent: publicView(next, now) });
       return json({ event: ev, agent: r.agent });
     }
@@ -70,6 +97,17 @@ export class EventHub {
       const ids = new Set([...known, ...this.agents.keys()]);
       const agents = [...ids].map(id => publicView(this.agents.get(id) || { ...emptyAgent(id, now), firstSeen: 0 }, now));
       return json({ agents, now });
+    }
+
+    if (url.pathname === '/reviews') {
+      const author = url.searchParams.get('author') || '';
+      const list = author ? this.reviews.filter(r => r.author_agent === author) : this.reviews;
+      return json({ reviews: list.slice(-200), now });
+    }
+
+    if (url.pathname === '/changes') {
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('day') || '') ? url.searchParams.get('day') : dayOf(now);
+      return json({ day, changes: changesForDay(this.changes, [...this.agents.values()], day), now });
     }
 
     if (url.pathname === '/list') {

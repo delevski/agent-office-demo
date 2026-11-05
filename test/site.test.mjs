@@ -65,3 +65,14 @@ test('demo roster carries clearly-demo skills and sample tasks for the shelves a
   for (const a of r.agents) { assert.ok(a.skills?.length, a.id); assert.ok(a.demoTasks?.length, a.id); }
   for (const a of r.live) { assert.ok(!a.skills && !a.demoTasks, `${a.id}: live agents report their own skills`); }
 });
+
+test('v3: reviews overlay, changes card and the shared insights module are wired and public', () => {
+  const html = read('index.html');
+  for (const id of ['btn-reviews', 'review-ov', 'review-ov-body', 'changes-card', 'changes-list']) assert.match(html, new RegExp(`id="${id}"`), id);
+  const ignore = read('.assetsignore').split('\n').map(s => s.trim());
+  assert.ok(!ignore.includes('insights.js'), 'insights.js is imported by the browser');
+  assert.match(read('main.js'), /from '\.\/insights\.js/);
+  assert.match(read('server/agents.js'), /from '\.\.\/insights\.js'/);
+  const readme = read('README.md');
+  for (const kind of ['review', 'pr.merged', 'deploy']) assert.match(readme, new RegExp('`' + kind.replace('.', '\\.') + '`'), kind);
+});

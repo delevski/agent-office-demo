@@ -8,6 +8,8 @@
 //   GET  /api/agents                 (session) all agents' live state
 //   GET  /api/agents/:id             (session) one agent
 //   GET  /api/events?since=N         (session) polling fallback / catch-up
+//   GET  /api/reviews[?author=id]    (session) code reviews (kind "review")
+//   GET  /api/changes[?day=YYYY-MM-DD] (session) what changed today: merged PRs, deploys, closed tasks
 //   GET  /api/ws                     (session) WebSocket live stream
 //   GET  /showcase                   public, embeddable demo-only view (same page, ?showcase mode)
 //   everything else                  -> static assets (the site; demo mode needs no login)
@@ -59,6 +61,8 @@ async function ingest(request, env, forcedAgent = null) {
     body.agent = who.agent;
   }
   const report = normalizeReport(body);
+  // review / pr.merged / deploy are validated; the original kinds never are (backward compatible)
+  if (report.errors) return json({ ok: false, error: 'invalid ' + report.kind, details: report.errors }, 400);
   if (!report.agent) report.agent = 'unknown';
   const res = await hub(env).fetch('https://hub/report', { method: 'POST', body: JSON.stringify(report) });
   return json({ ok: true, ...(await res.json()) });
@@ -105,6 +109,10 @@ export default {
         const one = path === '/api/agents' ? '' : agentId(decodeURIComponent(path.split('/')[3]));
         const known = encodeURIComponent(tokenAgents(env).join(','));
         const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
+        return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
+      if (path === '/api/reviews' || path === '/api/changes') {
+        const res = await hub(env).fetch('https://hub' + path.slice(4) + (url.search || ''));
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
       if (path === '/api/events') {

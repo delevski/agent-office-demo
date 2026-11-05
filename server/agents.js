@@ -1,10 +1,15 @@
 // server/agents.js — per-agent live state for the Agent Office (pure functions, no I/O).
 // The Durable Object (worker.js -> EventHub) keeps one state object per agent and runs every
 // accepted report through applyReport(). Kept pure so it is unit-tested with `node --test`.
+import { agentAlert, dayOf, history7, SEVERITIES } from '../insights.js';
+export { dayOf, ALERT_AFTER_MS, ALERT_AFTER_MIN } from '../insights.js';
 
 export const OFFLINE_AFTER_MS = 10 * 60 * 1000;   // no report for 10 min -> shown as offline
 export const MAX_TASKS = 30;                       // recent tasks kept per agent
 export const USAGE_DAYS = 14;                      // daily usage history kept per agent
+export const DAILY_DAYS = 14;                      // daily done/failed counters kept per agent (7-day graph)
+export const MAX_FINDINGS = 50;                    // findings kept per review
+export const NEW_KINDS = ['review', 'pr.merged', 'deploy'];
 export const STATUSES = ['working', 'idle', 'blocked', 'offline'];
 export const USAGE_FIELDS = ['messages', 'tokens', 'cost', 'tasks', 'calls', 'pct_of_quota'];
 const TASK_STATUSES = ['running', 'done', 'failed', 'blocked', 'queued'];
@@ -41,10 +46,6 @@ function time(v, fallback) {
   const t = typeof v === 'number' ? v : Date.parse(v);
   return Number.isFinite(t) && t > 0 ? t : fallback;
 }
-/** YYYY-MM-DD in the office's time zone (Ori is in Israel). */
-export function dayOf(ts, tz = 'Asia/Jerusalem') {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
-}
 function cleanTask(t, now) {
   if (!t || typeof t !== 'object') return null;
   const title = str(t.title ?? t.name, 160);
@@ -69,10 +70,131 @@ function cleanConfig(c) {
   return Object.keys(out).length ? out : null;
 }
 
+
+/* ---------------- new kinds: review · pr.merged · deploy (validated: bad payloads get a 400) ---------------- */
+const MAX_PAST_MS = 400 * 86400_000;
+const FUTURE_SLACK_MS = 5 * 60 * 1000;
+/** ts for an event that may be reported late (a review written an hour ago). Future times clamp to now. */
+function eventTime(v, now, errors) {
+  if (v === null || v === undefined || v === '') return now;
+  const t = typeof v === 'number' ? v : Date.parse(v);
+  if (!Number.isFinite(t) || t <= 0) { errors.push('ts: not a date (ISO string or epoch ms)'); return now; }
+  if (t > now + FUTURE_SLACK_MS) return now;
+  if (t < now - MAX_PAST_MS) { errors.push('ts: older than 400 days'); return now; }
+  return Math.min(t, now);
+}
+/** pr: 12 | "12" | "#12" | "https://github.com/owner/repo/pull/12" -> {pr, repo?} */
+function parsePr(v) {
+  if (v === null || v === undefined) return { pr: '' };
+  const s = str(v, 300);
+  const m = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i.exec(s);
+  if (m) return { pr: m[2], repo: m[1] };
+  return { pr: str(s.replace(/^#/, ''), 20) };
+}
+function repoOf(v) {
+  const s = str(v, 100).replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  return s;
+}
+function prLink(repo, pr) {
+  return /^[\w.-]+\/[\w.-]+$/.test(repo) && /^\d+$/.test(pr) ? `https://github.com/${repo}/pull/${pr}` : '';
+}
+const VERDICTS = {
+  approved: 'approved', approve: 'approved', lgtm: 'approved', accepted: 'approved', pass: 'approved',
+  changes_requested: 'changes_requested', request_changes: 'changes_requested', changes: 'changes_requested',
+  rejected: 'changes_requested', reject: 'changes_requested', fail: 'changes_requested',
+  commented: 'commented', comment: 'commented', comments: 'commented', neutral: 'commented',
+};
+const SEVERITY_ALIASES = {
+  critical: 'critical', blocker: 'critical', severe: 'critical',
+  high: 'high', major: 'high', error: 'high',
+  medium: 'medium', moderate: 'medium', normal: 'medium', warning: 'medium',
+  low: 'low', minor: 'low',
+  nit: 'nit', nitpick: 'nit', trivial: 'nit', info: 'nit', style: 'nit', suggestion: 'nit',
+};
+function cleanFinding(f, i, errors) {
+  if (typeof f === 'string') { const title = str(f, 160); if (!title) { errors.push(`findings[${i}]: empty`); return null; } return { severity: 'medium', title }; }
+  if (!f || typeof f !== 'object') { errors.push(`findings[${i}]: must be an object or a string`); return null; }
+  const rawSev = str(f.severity ?? f.level ?? f.priority ?? 'medium', 20).toLowerCase();
+  const severity = SEVERITY_ALIASES[rawSev];
+  if (!severity) errors.push(`findings[${i}].severity: "${rawSev}" is not one of ${SEVERITIES.join(', ')}`);
+  const title = str(f.title ?? f.message ?? f.text ?? f.summary ?? f.body, 160);
+  if (!title) errors.push(`findings[${i}]: needs a title (or message)`);
+  const out = { severity: severity || 'medium', title };
+  const file = str(f.file ?? f.path, 120); if (file) out.file = file;
+  const line = num(f.line); if (line !== undefined) out.line = Math.floor(line);
+  return out;
+}
+/** review: who reviewed which PR of whom, and what they found. */
+export function parseReview(body, sender, now = Date.now()) {
+  const errors = [];
+  const { pr, repo: repoFromPr } = parsePr(body.pr ?? body.pr_number ?? body.pull_request);
+  const repo = repoOf(body.repo ?? body.repository ?? '') || repoFromPr || '';
+  if (!pr) errors.push('pr: required (number, "#12" or the PR URL)');
+  const author = agentId(body.author_agent ?? body.author);
+  if (!author) errors.push('author_agent: required (the agent whose PR was reviewed)');
+  const reviewer = agentId(body.reviewer_agent ?? body.reviewer) || sender || '';
+  if (!reviewer) errors.push('reviewer_agent: required');
+  const rawVerdict = str(body.verdict ?? body.state ?? 'commented', 30).toLowerCase().replace(/[\s-]+/g, '_');
+  const verdict = VERDICTS[rawVerdict];
+  if (!verdict) errors.push(`verdict: "${rawVerdict}" is not one of approved, changes_requested, commented`);
+  let findings = [];
+  const rawF = body.findings ?? body.issues ?? [];
+  if (!Array.isArray(rawF)) errors.push('findings: must be an array');
+  else findings = rawF.slice(0, MAX_FINDINGS).map((f, i) => cleanFinding(f, i, errors)).filter(Boolean);
+  const round = Math.max(1, Math.floor(num(body.round) || 1));
+  const ts = eventTime(body.ts ?? body.reviewed_at, now, errors);
+  const review = {
+    id: `${repo}#${pr}@${reviewer}#${round}`,
+    pr, repo, title: str(body.title ?? body.pr_title, 160),
+    link: link(body.link ?? body.url) || prLink(repo, pr),
+    author_agent: author, reviewer_agent: reviewer, verdict, round,
+    findings, summary: str(body.summary, 300), ts,
+  };
+  return { review, errors };
+}
+/** pr.merged: a PR landed on main. */
+export function parseMerge(body, sender, now = Date.now()) {
+  const errors = [];
+  const { pr, repo: repoFromPr } = parsePr(body.pr ?? body.pr_number ?? body.pull_request);
+  const repo = repoOf(body.repo ?? body.repository ?? '') || repoFromPr || '';
+  const title = str(body.title ?? body.pr_title, 160);
+  if (!pr && !title) errors.push('pr or title: required');
+  const ts = eventTime(body.ts ?? body.merged_at, now, errors);
+  return {
+    change: {
+      id: `pr:${repo}#${pr || title}`, type: 'pr.merged', agent: sender || '', pr, repo, title,
+      link: link(body.link ?? body.url) || prLink(repo, pr),
+      author_agent: agentId(body.author_agent ?? body.author), merged_by: agentId(body.merged_by) || sender || '', ts,
+    },
+    errors,
+  };
+}
+const DEPLOY_STATUS = { success: 'success', succeeded: 'success', ok: 'success', done: 'success', live: 'success', failed: 'failed', failure: 'failed', fail: 'failed', error: 'failed', rolled_back: 'rolled_back', rollback: 'rolled_back' };
+/** deploy: something went live (or failed to). */
+export function parseDeploy(body, sender, now = Date.now()) {
+  const errors = [];
+  const target = str(body.target ?? body.service ?? body.app ?? body.project, 60);
+  if (!target) errors.push('target: required (what was deployed, e.g. "agent-office")');
+  const rawStatus = str(body.status ?? body.result ?? 'success', 20).toLowerCase().replace(/[\s-]+/g, '_');
+  const status = DEPLOY_STATUS[rawStatus];
+  if (!status) errors.push(`status: "${rawStatus}" is not one of success, failed, rolled_back`);
+  const env = str(body.env ?? body.environment ?? 'production', 30);
+  const version = str(body.version ?? body.sha ?? body.tag ?? body.commit, 40);
+  const ts = eventTime(body.ts ?? body.deployed_at, now, errors);
+  return {
+    change: {
+      id: `deploy:${target}:${env}:${version || ts}`, type: 'deploy', agent: sender || '', target, env, version,
+      status: status || 'success', link: link(body.link ?? body.url), note: str(body.note, 140), ts,
+    },
+    errors,
+  };
+}
+
 /* ---------------- report normalization ---------------- */
 // One report = one POST body. Fields may be nested ("usage": {...}) or flat at the top level,
 // so small reporters (curl, hooks) can send whatever is simplest for them.
 const KIND_ALIASES = {
+  'pr.review': 'review', 'review.done': 'review', 'pr.merge': 'pr.merged', 'merge': 'pr.merged', 'deployed': 'deploy', 'deploy.done': 'deploy',
   'task.started': 'task.start', 'task.begin': 'task.start',
   'task.completed': 'task.done', 'task.finished': 'task.done', 'task.ok': 'task.done',
   'task.error': 'task.failed',
@@ -113,6 +235,9 @@ export function normalizeReport(body, now = Date.now()) {
       return ct;
     }).filter(Boolean);
   }
+  if (kind === 'review') { const p = parseReview(body, r.agent, now); r.review = p.review; if (p.errors.length) r.errors = p.errors; }
+  if (kind === 'pr.merged') { const p = parseMerge(body, r.agent, now); r.change = p.change; if (p.errors.length) r.errors = p.errors; }
+  if (kind === 'deploy') { const p = parseDeploy(body, r.agent, now); r.change = p.change; if (p.errors.length) r.errors = p.errors; delete r.status; }
   if (kind === 'task.done' || kind === 'task.failed') {
     if (body.status === 'failed' || kind === 'task.failed') r.taskStatus = 'failed';
     else if (body.status === 'blocked') r.taskStatus = 'blocked';
@@ -134,13 +259,23 @@ export function feedNote(r) {
   if (r.kind === 'task.done') return (r.taskStatus === 'failed' ? 'נכשל: ' : 'סיים: ') + t;
   if (r.kind === 'task.failed') return t ? `נכשל: ${t}` : 'משימה נכשלה';
   if (r.kind === 'task.queued') return t ? `בתור: ${t}` : 'משימה נוספה לתור';
+  if (r.kind === 'review' && r.review) {
+    const v = r.review, n = v.findings.length;
+    const verdict = { approved: 'אושר', changes_requested: 'נדרשו תיקונים', commented: 'הערות' }[v.verdict] || '';
+    return `ביקורת על PR #${v.pr} של ${v.author_agent}: ${n ? n + ' ממצאים' : 'בלי ממצאים'} · ${verdict}`;
+  }
+  if (r.kind === 'pr.merged' && r.change) return `מוזג: PR ${r.change.pr ? '#' + r.change.pr : ''}${r.change.title ? ' · ' + r.change.title : ''}`.trim();
+  if (r.kind === 'deploy' && r.change) {
+    const c = r.change;
+    return `${c.status === 'success' ? 'פריסה' : c.status === 'failed' ? 'פריסה נכשלה' : 'פריסה בוטלה'}: ${c.target} → ${c.env}${c.version ? ' · ' + c.version : ''}`;
+  }
   if (r.kind === 'status') return { working: 'עובד', idle: 'פנוי', blocked: 'תקוע — מחכה למשהו', offline: 'התנתק' }[r.status] || 'עדכון סטטוס';
   return r.kind;
 }
 
 /* ---------------- state ---------------- */
 export function emptyAgent(id, now = Date.now()) {
-  return { id, name: '', status: 'idle', current: null, tasks: [], usage: {}, config: null, events: 0, firstSeen: now, lastSeen: 0 };
+  return { id, name: '', status: 'idle', current: null, tasks: [], usage: {}, config: null, events: 0, firstSeen: now, lastSeen: 0, taskUpdated: 0, lastHeartbeat: 0, daily: {} };
 }
 
 function upsertTask(a, t) {
@@ -164,7 +299,12 @@ function setUsage(a, day, usage, mode, now) {
 /** Apply one normalized report to an agent state (returns a new object). */
 export function applyReport(prev, r, now = Date.now()) {
   const a = structuredClone(prev || emptyAgent(r.agent, now));
+  const before = new Map((a.tasks || []).map(t => [t.id, t.status]));
+  // heartbeat recent[] items without an id get a synthetic one; never count the same finished title twice a day
+  const seenFinished = new Set((a.tasks || []).filter(t => t.ended).map(t => `${t.status}|${t.title}|${dayOf(t.ended)}`));
+  const currentBefore = a.current?.id || a.current?.title || null;
   a.lastSeen = now;
+  if (r.kind === 'heartbeat') a.lastHeartbeat = now;
   if (r.name) a.name = r.name;
   if (isFeedEvent(r)) a.events = (a.events || 0) + 1;
 
@@ -217,12 +357,38 @@ export function applyReport(prev, r, now = Date.now()) {
       if (r.config) a.config = { ...(a.config || {}), ...r.config, updated: now };
       break;
     }
+    case 'review':
+    case 'pr.merged':
+    case 'deploy':
+      // stored by the hub (reviews / change log); for the sender it counts as activity only
+      break;
     default:
       // legacy free-form event ({agent, kind, value, note}): counts as activity only.
       if (r.status) a.status = r.status;
       break;
   }
+  // stuck detection: when did the open task last get an update?
+  const currentNow = a.current?.id || a.current?.title || null;
+  if (currentNow && (currentNow !== currentBefore || (r.task && ['task.start', 'status', 'heartbeat'].includes(r.kind)))) a.taskUpdated = now;
+  if (!currentNow) a.taskUpdated = 0;
+  // 7-day history: count every task that just became done/failed, on the day it ended
+  a.daily = a.daily || {};
+  for (const t of a.tasks) {
+    if ((t.status !== 'done' && t.status !== 'failed') || !t.ended || before.get(t.id) === t.status) continue;
+    const d = dayOf(t.ended);
+    if (r.kind === 'heartbeat' && seenFinished.has(`${t.status}|${t.title}|${d}`)) continue;
+    a.daily[d] = a.daily[d] || { done: 0, failed: 0 };
+    a.daily[d][t.status]++;
+  }
+  const days = Object.keys(a.daily).sort();
+  while (days.length > DAILY_DAYS) delete a.daily[days.shift()];
   return a;
+}
+
+/** Tasks that this report closed as done (for the "what changed today" feed). */
+export function newlyDone(prev, next) {
+  const before = new Map((prev?.tasks || []).map(t => [t.id, t.status]));
+  return (next?.tasks || []).filter(t => t.status === 'done' && t.ended && before.get(t.id) !== 'done');
 }
 
 /** What the UI receives: state + derived fields (offline, today's usage). */
@@ -231,7 +397,7 @@ export function publicView(a, now = Date.now()) {
   const offline = !a.lastSeen || now - a.lastSeen > OFFLINE_AFTER_MS;
   const doneToday = a.tasks.filter(t => t.status === 'done' && t.ended && dayOf(t.ended) === today).length;
   const u = a.usage[today] || null;
-  return {
+  const view = {
     id: a.id,
     name: a.name || a.id,
     status: offline ? 'offline' : a.status,
@@ -244,5 +410,10 @@ export function publicView(a, now = Date.now()) {
     events: a.events || 0,
     lastSeen: a.lastSeen || null,
     hasData: !!a.lastSeen,
+    taskUpdated: a.current ? (a.taskUpdated || a.lastSeen || null) : null,
+    lastHeartbeat: a.lastHeartbeat || null,
+    history7: history7(a.daily, a.tasks, now),
   };
+  view.alert = agentAlert(view, now);
+  return view;
 }
