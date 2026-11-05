@@ -3,8 +3,10 @@ compatibility_date = "2026-10-29"
 main = "worker.js"
 
 # Repo root IS the static site (flat layout, mirrors the deployed Worker assets).
+# Server code, tests and local secrets are kept out of the public assets by .assetsignore.
 [assets]
 directory = "."
+binding = "ASSETS"
 
 [durable_objects]
 bindings = [{ name = "HUB", class_name = "EventHub" }]
@@ -12,3 +14,11 @@ bindings = [{ name = "HUB", class_name = "EventHub" }]
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["EventHub"]
+
+# Secrets (set with `npx wrangler secret put NAME`, never committed; see README "Login & agent API"):
+#   OFFICE_PASSWORD        Ori's login password
+#   SESSION_SECRET         optional, signs the login cookie (defaults to a key derived from OFFICE_PASSWORD)
+#   AGENT_TOKEN_TAB        write token for Tab
+#   AGENT_TOKEN_INSTINCT   write token for Instinct
+#   AGENT_TOKEN_HERMES     write token for Hermes (when it joins)
+#   INGEST_TOKEN           legacy shared token (X-Ingest-Token), still accepted

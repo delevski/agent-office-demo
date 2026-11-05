@@ -1,0 +1,17 @@
+# Keep everything that is not the website out of the public static assets
+# (the assets directory is the repo root).
+.git
+.github
+.gitignore
+.assetsignore
+.dev.vars
+.dev.vars.*
+.wrangler
+node_modules
+server
+test
+worker.js
+wrangler.toml
+package.json
+package-lock.json
+README.md
