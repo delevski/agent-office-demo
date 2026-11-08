@@ -417,11 +417,13 @@ export function applyReport(prev, r, now = Date.now()) {
   if (isFeedEvent(r)) a.events = (a.events || 0) + 1;
 
   switch (r.kind) {
+    case 'task.progress':
     case 'task.start': {
       const t = r.task || { id: '', title: r.note || 'משימה', link: '', since: now };
       if (!t.id) t.id = 't' + now.toString(36);
       a.current = { id: t.id, title: t.title, link: t.link, since: t.since };
-      upsertTask(a, { ...t, status: 'running' });
+      const previous = a.tasks.find(x => x.id === t.id);
+      upsertTask(a, { ...previous, ...t, status: 'running', ...(r.board ? { board: r.board, assigned: true, note: r.board.note } : {}) });
       a.status = 'working';
       break;
     }
@@ -431,7 +433,7 @@ export function applyReport(prev, r, now = Date.now()) {
       const status = TASK_STATUSES.includes(r.taskStatus) ? r.taskStatus : 'done';
       if (t) {
         const match = a.tasks.find(x => (t.id && x.id === t.id) || (!t.id && x.title === t.title));
-        upsertTask(a, { ...(match || {}), ...t, id: t.id || match?.id || 't' + now.toString(36), since: match?.since || t.since, status, ended: now });
+        upsertTask(a, { ...(match || {}), ...t, id: t.id || match?.id || 't' + now.toString(36), since: match?.since || t.since, status, ended: now, ...(r.board ? { board: r.board } : {}) });
         if (a.current && ((t.id && a.current.id === t.id) || (!t.id && a.current.title === t.title))) a.current = null;
       }
       if (!a.current) a.status = r.status || 'idle';
@@ -442,7 +444,7 @@ export function applyReport(prev, r, now = Date.now()) {
       if (!t.id) t.id = 'q' + now.toString(36);
       const existing = a.tasks.find(x => x.id === t.id);
       // r.assigned is set only by the office itself (the "give a task" button), never parsed from an agent's report
-      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued', ...(r.assigned ? { assigned: true, note: r.assigned.note || '' } : {}) });
+      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued', ...(r.assigned ? { assigned: true, note: r.assigned.note || '' } : {}), ...(r.board ? { board: r.board } : {}) });
       break;
     }
     case 'status': {

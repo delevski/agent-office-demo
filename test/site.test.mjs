@@ -90,7 +90,7 @@ test('v4: replay bar, summary overlay and the shared reducer are public; replay/
   for (const s of ['`handoff`', '/api/summary', 'budget', 'activity', 'from_agent']) assert.ok(readme.includes(s), s);
 });
 
-test('v5: reliability on the agent card and a "give a task" form that only writes a board card', () => {
+test('v7: reliability remains and owner tasks use a durable inbox, not direct client sends', () => {
   const html = read('index.html');
   for (const id of ['btn-assign', 'assign-ov', 'assign-form', 'assign-title', 'assign-agent', 'assign-note']) assert.match(html, new RegExp(`id="${id}"`), id);
   const main = read('main.js');
@@ -101,8 +101,9 @@ test('v5: reliability on the agent card and a "give a task" form that only write
   assert.ok(i > 0);
   const handler = worker.slice(i, worker.indexOf('/* ---- private reads', i));
   assert.match(handler, /isLoggedIn/);
-  assert.match(handler, /kind: 'task\.queued'/);
-  assert.doesNotMatch(handler, /fetch\((?!'https:\/\/hub\/report')/, 'the only call is to the office hub: no agent is contacted');
+  assert.match(handler, /parseBoardTask/);
+  assert.match(handler, /https:\/\/hub\/board\/create/);
+  assert.doesNotMatch(handler, /slack\.com|chat\.postMessage/, 'the browser never holds a Slack credential');
   const readme = read('README.md');
   assert.ok(readme.includes('/api/tasks') && readme.includes('Reliability'));
 });

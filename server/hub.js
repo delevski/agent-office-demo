@@ -5,6 +5,8 @@
 import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent, newlyDone, dayOf } from './agents.js';
 import { changesForDay, buildSummary, overnightSince, dayBounds } from '../insights.js';
 
+import { boardView, boardReport, BOARD_LIMIT } from './board.js';
+
 const FEED_MAX = 200;
 const REVIEWS_MAX = 300;
 const CHANGES_MAX = 400;
@@ -15,7 +17,7 @@ const LOG_MAX_CHUNKS = 60;   // a cap on how much of a busy day is kept for the 
 const LOG_DAYS = 3;          // days of replay kept
 /** What the replay stores of a report: all of it except the errors list (never present on accepted reports). */
 function compact(r) {
-  const { errors, ...rest } = r;
+  const { errors, claimToken, ...rest } = r;
   return rest;
 }
 const LOGIN_MAX_FAILS = 8;
@@ -36,10 +38,21 @@ export class EventHub {
       this.handoffs = (await this.state.storage.get('handoffs')) || [];
       this.logMeta = (await this.state.storage.get('logmeta')) || { day: '', chunk: 0, days: [] };
       this.logBuf = this.logMeta.day ? ((await this.state.storage.get(`log:${this.logMeta.day}:${this.logMeta.chunk}`)) || []) : [];
+      this.board = [...(await this.state.storage.list({ prefix: 'board:' })).values()];
       this.agents = new Map();
       const rows = await this.state.storage.list({ prefix: 'agent:' });
       for (const [k, v] of rows) this.agents.set(k.slice(6), v);
     });
+  }
+
+  agentView(agent, now) {
+    const view = publicView(agent, now);
+    // The durable inbox is not subject to the activity history's 15-card cap.
+    const owned = this.board.filter(t => t.agent === agent.id);
+    view.tasks = [...owned.map(t => ({ id: t.id, title: t.title, status: t.status === 'queued' ? 'queued' : t.status,
+      since: t.created, ended: ['done', 'failed'].includes(t.status) ? t.updated : undefined,
+      link: t.link, assigned: true, note: t.note, board: boardView(t, now) })), ...view.tasks.filter(t => !owned.some(b => b.id === t.id))];
+    return view;
   }
 
   broadcast(obj) {
@@ -88,6 +101,75 @@ export class EventHub {
   async fetch(request) {
     const url = new URL(request.url);
     const now = Date.now();
+
+    if (url.pathname === '/board/list') {
+      const agent = url.searchParams.get('agent');
+      return json({ tasks: this.board.filter(t => !agent || t.agent === agent).map(t => boardView(t, now)), now });
+    }
+    if (url.pathname === '/board/create' && request.method === 'POST') {
+      const input = await request.json();
+      const existing = this.board.filter(t => t.requestId === input.requestId);
+      if (existing.length) {
+        if (existing[0].title !== input.title || existing[0].note !== input.note || existing.map(t => t.agent).sort().join() !== [...input.agents].sort().join())
+          return json({ ok: false, error: 'requestId conflict' }, 409);
+        return json({ ok: true, duplicate: true, tasks: existing.map(t => boardView(t)) });
+      }
+      // Never evict unfinished work. Owner retries with the same id after a lost response.
+      if (this.board.length + input.agents.length > BOARD_LIMIT) return json({ ok: false, error: 'board full; archive completed requests first' }, 409);
+      const added = input.agents.map(agent => ({ id: 'board-' + input.requestId + '-' + agent,
+        requestId: input.requestId, title: input.title, note: input.note, agent,
+        source: 'office-owner-session', created: now, updated: now, status: 'queued', delivery: 'pending', result: '', link: '' }));
+      this.board.push(...added);
+      await this.state.storage.put(Object.fromEntries(added.map(t => ['board:' + t.id, t])));
+      for (const task of added) await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
+      return json({ ok: true, tasks: added.map(t => boardView(t)) });
+    }
+    if (url.pathname === '/board/retry' && request.method === 'POST') {
+      const body = await request.json(), task = this.board.find(t => t.id === body.id);
+      if (!task || task.status !== 'queued' || task.delivery !== 'error') return json({ error: 'not retryable' }, 409);
+      task.delivery = 'pending'; task.deliveryNote = ''; task.updated = now;
+      await this.state.storage.put('board:' + task.id, task);
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
+      return json({ ok: true });
+    }
+    if (url.pathname === '/board/claim' && request.method === 'POST') {
+      const body = await request.json(), task = this.board.find(t => t.id === body.id);
+      if (!task || task.agent !== body.agent) return json({ error: 'not assigned' }, 403);
+      if (['done', 'failed'].includes(task.status)) return json({ error: 'already settled' }, 409);
+      if (task.claimToken && task.claimToken !== body.claimToken) return json({ error: 'already claimed; do not repeat execution' }, 409);
+      task.claimToken ||= crypto.randomUUID();
+      task.status = 'running'; task.updated = now;
+      await this.state.storage.put('board:' + task.id, task);
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, 'task.start')) }));
+      return json({ ok: true, task: boardView(task), claimToken: task.claimToken });
+    }
+    if (url.pathname === '/board/delivery' && request.method === 'POST') {
+      const body = await request.json(), task = this.board.find(t => t.id === body.id);
+      if (!task) return json({ error: 'not found' }, 404);
+      if (!['delivered', 'error'].includes(body.delivery)) return json({ error: 'invalid delivery' }, 400);
+      if (body.delivery === 'delivered' && !/^\d+\.\d+$/.test(body.slackTs || '')) return json({ error: 'Slack receipt required' }, 400);
+      task.delivery = body.delivery; task.deliveryNote = String(body.note || '').slice(0, 300);
+      task.slackTs = body.slackTs || task.slackTs || ''; task.updated = now;
+      await this.state.storage.put('board:' + task.id, task);
+      this.broadcast({ type: 'agent', agent: this.agentView(this.agents.get(task.agent) || emptyAgent(task.agent, now), now) });
+      return json({ ok: true, task: boardView(task) });
+    }
+    if (url.pathname === '/board/report' && request.method === 'POST') {
+      const r = await request.json(), task = this.board.find(t => t.id === r.task?.id);
+      if (!task || task.agent !== r.agent || !task.claimToken || task.claimToken !== r.claimToken) return json({ error: 'valid task claim required' }, 403);
+      if (!['task.start', 'task.progress', 'task.done', 'task.failed'].includes(r.kind)) return json({ error: 'unsupported board event' }, 400);
+      const result = String(r.note || '').trim().slice(0, 2000);
+      if (['task.done', 'task.failed'].includes(r.kind) && !result) return json({ error: 'result required' }, 400);
+      if (['done', 'failed'].includes(task.status)) {
+        return ['task.done', 'task.failed'].includes(r.kind) && task.status === (r.kind === 'task.failed' ? 'failed' : r.taskStatus || 'done') && result === task.result
+          ? json({ ok: true, duplicate: true }) : json({ error: 'already settled' }, 409);
+      }
+      task.status = r.kind === 'task.failed' ? 'failed' : r.kind === 'task.done' ? r.taskStatus || 'done' : 'running';
+      task.updated = now; task.result = result || task.result;
+      task.link = r.task.link || task.link;
+      await this.state.storage.put('board:' + task.id, task);
+      return this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, r.kind)) }));
+    }
 
     if (url.pathname === '/report' && request.method === 'POST') {
       const r = await request.json();
@@ -158,7 +240,7 @@ export class EventHub {
       if (receiver) this.broadcast({ type: 'agent', agent: publicView(receiver, now) });
       if (r.kind === 'review' && r.review) this.broadcast({ type: 'review', review: r.review });
       for (const c of newChanges) this.broadcast({ type: 'change', change: c });
-      this.broadcast({ type: 'agent', agent: publicView(next, now) });
+      this.broadcast({ type: 'agent', agent: this.agentView(next, now) });
       return json({ event: ev, agent: r.agent });
     }
 
@@ -167,10 +249,10 @@ export class EventHub {
       const one = url.searchParams.get('id') || '';
       if (one) {
         const a = this.agents.get(one) || (known.includes(one) ? emptyAgent(one, now) : null);
-        return a ? json({ agent: publicView(a, now) }) : json({ error: 'unknown agent' }, 404);
+        return a ? json({ agent: this.agentView(a, now) }) : json({ error: 'unknown agent' }, 404);
       }
       const ids = new Set([...known, ...this.agents.keys()]);
-      const agents = [...ids].map(id => publicView(this.agents.get(id) || { ...emptyAgent(id, now), firstSeen: 0 }, now));
+      const agents = [...ids].map(id => this.agentView(this.agents.get(id) || { ...emptyAgent(id, now), firstSeen: 0 }, now));
       return json({ agents, now });
     }
 
@@ -205,7 +287,7 @@ export class EventHub {
       const since = Number.isFinite(parsed) && parsed > 0 && parsed < now ? parsed : overnightSince(now);
       const known = (url.searchParams.get('known') || '').split(',').filter(Boolean);
       const ids = new Set([...known, ...this.agents.keys()]);
-      const agents = [...ids].map(id => publicView(this.agents.get(id) || { ...emptyAgent(id, now), firstSeen: 0 }, now)).map(v => ({ ...v, tasks: (this.agents.get(v.id)?.tasks || []) }));
+      const agents = [...ids].map(id => this.agentView(this.agents.get(id) || { ...emptyAgent(id, now), firstSeen: 0 }, now)).map(v => ({ ...v, tasks: (this.agents.get(v.id)?.tasks || []) }));
       const s = buildSummary({ agents, changes: this.changes, reviews: this.reviews, since, until: now });
       if (url.searchParams.get('format') === 'text') return new Response(s.text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       return json(s);

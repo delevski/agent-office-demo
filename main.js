@@ -1039,11 +1039,13 @@ function reliabilityHtml(a, v) {
     </details></section>`;
 }
 
-/* ---------------- C2. "give a task": a card on the board, nothing else ---------------- */
+/* Owner requests: keep a stable key across a network retry. */
+let assignRequestId = '', assignFingerprint = '';
 function openAssign(agentId = '') {
   const sel = $('#assign-agent');
   const list = LIVE.length ? LIVE : [];
-  sel.innerHTML = list.map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  sel.innerHTML = '<option value="all">כולם: Instinct, Hermes, Tab</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  assignRequestId = ''; assignFingerprint = '';
   $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
   openOverlay('#assign-ov');
   setTimeout(() => $('#assign-title').focus(), 60);
@@ -1053,13 +1055,17 @@ $('#assign-form')?.addEventListener('submit', e => {
   e.preventDefault();
   const title = $('#assign-title').value.trim(), agent = $('#assign-agent').value, note = $('#assign-note').value.trim();
   if (!title) { $('#assign-err').textContent = 'צריך כותרת למשימה'; $('#assign-title').focus(); return; }
-  withBusy($('#assign-submit'), 'מוסיף…', async () => {
-    const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, agent, note }) });
+  const fingerprint = JSON.stringify({ title, agent, note });
+  if (fingerprint !== assignFingerprint) { assignRequestId = crypto.randomUUID(); assignFingerprint = fingerprint; }
+  const requestId = assignRequestId;
+  withBusy($('#assign-submit'), 'שומר בתור…', async () => {
+    $('#assign-err').textContent = '';
+    const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, agent, note, requestId }) });
     const d = await r.json().catch(() => ({}));
     if (r.status === 401) { onLoggedOut(true); return; }
     if (!r.ok || !d.ok) { $('#assign-err').textContent = 'לא נוסף: ' + ((d.details || []).join(', ') || d.error || r.status); return; }
     closeOverlay('#assign-ov');
-    toast(`🗂️ נוסף ללוח של ${nameOf(agent)}: ${title}`);
+    toast(`נשמר בתור עבור ${agent === 'all' ? 'שלושת הסוכנים' : nameOf(agent)}. ממתין לאיסוף, לא בוצע עדיין.`);
     loadAgents();
     if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay();
   });
@@ -1276,7 +1282,7 @@ function boardData() {
   for (const a of LIVE) {
     const v = liveState.get(a.id);
     for (const t of v?.tasks || []) {
-      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to, assigned: t.assigned, note: t.note };
+      const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to, assigned: t.assigned, note: t.note, board: t.board, id: t.id };
       card.when = card.ts ? when(card.ts) : '';
       if (t.status === 'running') cols.doing.push(card);
       else if (t.status === 'queued' || t.status === 'blocked') cols.todo.push(card);
@@ -1300,7 +1306,7 @@ function refreshWorld(now = false) {
   if (!office) return;
   if (!now) { if (!worldTimer) worldTimer = setTimeout(() => { worldTimer = null; refreshWorld(true); }, 400); return; }
   const bd = boardData();
-  const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status))]);
+  const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status + JSON.stringify(x.board || {})))]);
   if (sig !== lastBoardSig) { lastBoardSig = sig; office.updateBoard(bd); if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); }
   const rows = shelfRows();
   const ssig = JSON.stringify(rows.map(r => [r.meta.id, r.skills, r.nodata]));
@@ -1319,7 +1325,7 @@ function openBoard() { renderBoardOverlay(); openOverlay('#board-ov'); }
 function openShelves() { renderShelfOverlay(); openOverlay('#shelf-ov'); }
 function renderBoardOverlay() {
   const bd = boardData();
-  $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות שהסוכנים דיווחו, וכרטיסים שנוספו ידנית';
+  $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות הלוח ממתינות לאיסוף (בדיקה כל 5 דקות). סיום רק אחרי דיווח עם תוצאה.';
   const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
   $('#board-ov-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
     const list = bd.columns[k];
@@ -1328,11 +1334,26 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${c.assigned ? '<span class="kb-manual" title="נוסף ידנית מהלוח">✍️ ידני</span> · ' : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
+        <div class="kb-meta">${c.assigned ? '<span class="kb-manual" title="נוסף ידנית מהלוח">✍️ ידני</span> · ' : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');
 }
+function boardStatusHtml(c) {
+  if (!c.board) return '';
+  const b = c.board;
+  const label = b.status === 'running' ? 'הסוכן קיבל ועובד' : b.status === 'done' ? 'הסוכן דיווח שהושלם' : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
+  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${b.delivery === 'error' && b.status === 'queued' ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}`;
+}
+$('#board-ov-cols').addEventListener('click', e => {
+  const btn = e.target.closest('.board-retry');
+  if (!btn) return;
+  withBusy(btn, 'מחזיר לתור…', async () => {
+    const r = await fetch('./api/tasks/' + encodeURIComponent(btn.dataset.task) + '/retry', { method: 'POST', credentials: 'same-origin' });
+    if (!r.ok) throw new Error('retry failed');
+    await loadAgents(); renderBoardOverlay();
+  });
+});
 function renderShelfOverlay() {
   const rows = shelfRows();
   $('#shelf-ov-sub').textContent = mode === 'demo' ? 'דמו · סקילים לדוגמה של דמויות הדמו' : 'חי · היכולות שכל סוכן דיווח (config)';
