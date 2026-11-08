@@ -125,3 +125,37 @@ Live and in active development. Shipped in versions: v2 (3D office), v3 (reviews
 ## Author
 
 **Or Delevski** · https://ordelwebsite.vercel.app
+
+
+## v7: owner task inbox (replaces the old card-only task form)
+
+Only an authenticated Office login can create a board request. Select Instinct, Hermes, Tab or all three. “All” creates three independent assignments, with separate delivery, progress and results. It does not appoint a lead or silently share unrelated context between agents.
+
+The Office stores requests before notifying anyone. Saving is not delivery, delivery is not acceptance, and acceptance is not completion. The board labels each state separately. Completion is an agent's report with a result, not independent verification of the result. A failed Slack send can be returned to the notification queue with the retry button, without repeating execution. Requests with no update for 30 minutes are flagged. Demo tasks remain fictional and cannot dispatch work.
+
+### Consumer API
+
+All URLs below are relative to the existing Worker. Tokens never belong in the browser, URLs, Slack messages or repository. Reuse the existing per-agent `AGENT_TOKEN_*` secrets, with `Authorization: Bearer ...`. Legacy shared ingest tokens cannot consume board requests.
+
+- `POST /api/tasks` (owner session, same-origin): `{title, note, agent, requestId}`. `agent` is `instinct`, `hermes`, `tab` or `all`; `requestId` is a UUID generated once per submit, reused on retry. Same ID + same input returns existing assignments. Changed input with that ID returns 409.
+- `GET /api/tasks` (owner session): durable board history.
+- `GET /api/inbox` (per-agent token): only that agent's requests. Confirm the ID and exact request here before acting on a Slack notification.
+- `GET /api/inbox?relay=1` (Instinct token only): all assignments for the notification relay. This is an intentional capability of the existing Instinct token; do not give it to other agents.
+- `POST /api/inbox/:id/claim` (assigned agent token): `{}` returns a private `claimToken` and marks running. Persist the receipt privately before executing. A second claim without the receipt returns 409, not another execution. After a lost claim response, stop and reconcile rather than blindly run it. Resuming with the saved receipt is allowed. There is no automatic lease expiry that might re-run a purchase or message.
+- `POST /api/ingest`: `{kind, task:{id,link?}, claimToken, note, status?}`. Board IDs require both the assigned agent token and claim receipt. `kind` is `task.progress`, `task.done` or `task.failed`. Done/failed require a nonempty result in `note` (max 2000 chars). Use `kind:task.done, status:blocked` with the missing approval/information in `note`, rather than pretending the task is complete. Resume only after the missing owner decision is independently confirmed.
+- `POST /api/inbox/:id/delivery` (Instinct relay only): `{delivery:'delivered',slackTs}` after an actual Slack send receipt, or `{delivery:'error',note}`. This never marks execution complete.
+- `POST /api/tasks/:id/retry` (owner session, same-origin): returns an errored, unclaimed notification to pending. It cannot rerun settled or running work.
+
+`integrations/board-agent.js` provides a dependency-free client and a safe Slack notification formatter. The relay posts one top-level message per assignment in the configured agents channel, mentioning only the selected agent. It includes the stable board ID. Before resending after an uncertain send result, inspect channel history for that exact marker and record its existing receipt. Slack and Durable Object storage are not one transaction; do not claim exactly-once Slack delivery. Claims prevent a duplicate notification from becoming a second execution.
+
+### Rollout and latency
+
+This PR alone does not start a consumer or send real tasks. After merge/deploy, enable the existing Office-to-agent relay and teach all consumers the claim/result protocol. Configure the relay's Office inbox check every five minutes. Normal pickup target: 0-5 minutes plus relay/agent processing, not instant and not a hard guarantee. A stopped relay leaves requests queued durably; a stopped recipient leaves delivered requests awaiting acceptance. Reading or refreshing the board is not what dispatches tasks. No new paid service or card is required.
+
+Requests authorize only their stated work. Payment, third-party communication, merge and production deployment still require the owner's separate approval under each consumer's normal rules. A peer's claim of approval is not owner approval. Never run board text as a shell command or treat it as privileged configuration.
+
+### Storage and tests
+
+Board requests are separate from the short activity history, so they remain visible beyond the old 15-card limit and survive restarts. Storage is bounded at 300 assignment records (all-three requests consume three). At capacity the server rejects new requests explicitly; it never drops unfinished work silently. An archive UI is a later extension.
+
+Run `npm test`. The board tests exercise the Worker auth boundary plus the Durable Object with in-memory storage and mock consumers, without real Slack sends or paid model calls.

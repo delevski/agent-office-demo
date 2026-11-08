@@ -648,3 +648,13 @@ body[data-tod="night"]{background:radial-gradient(1200px 600px at 70% -10%,#141a
   .scene-sky::after{animation:none}
   .drawer,.scene-tools,.scene-quick,.scene-hint,.actions-pop{transition:none !important;animation:none !important}
 }
+
+/* Owner board delivery and results, including long URLs at phone width. */
+.board-status { margin-top:8px; color:var(--gold, #e3c47a); font-size:.78rem; }
+.board-result { margin-top:8px; padding:9px; border-radius:9px; background:rgba(255,255,255,.05); white-space:pre-wrap; overflow-wrap:anywhere; font-size:.8rem; }
+.board-retry { margin-top:8px; max-width:100%; white-space:normal; min-height:44px; }
+.kb-card .grow { min-width:0; overflow-wrap:anywhere; }
+.as-form label, .as-form select, .as-form input, .as-form textarea { min-width:0; max-width:100%; }
+.kb-card .board-status { color:#795500; }
+.kb-card .board-result { background:#eee7d8; color:#292114; }
+.kb-card .board-retry { color:#302416; background:#f2e7c9; border-color:#9d8358; }

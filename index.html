@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=24">
+<link rel="stylesheet" href="./styles.css?v=25">
 <meta name="theme-color" content="#14110c">
 </head>
 <body>
@@ -205,19 +205,20 @@
   </div>
 </div>
 
-<!-- "Give a task" (live mode): only adds a card to the board's to-do column. No agent is called or notified. -->
+<!-- Owner task requests: durable inbox for the selected agents. -->
 <div id="assign-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="assign-ov-title">
   <div class="ov-card card ov-narrow">
     <div class="ov-head">
-      <div><h3 id="assign-ov-title">➕ משימה חדשה</h3><div class="muted">כרטיס בעמודת "לביצוע". אף סוכן לא מקבל הודעה או הפעלה.</div></div>
+      <div><h3 id="assign-ov-title">➕ משימה חדשה</h3><div class="muted">המשימה תישלח לסוכנים שבחרת. איסוף עד כ־5 דקות כשהחיבור פעיל; סיום יוצג רק לאחר דיווח.</div></div>
       <button class="btn btn-ghost ov-close" type="button" data-close="#assign-ov" aria-label="סגירה">✕</button>
     </div>
     <form id="assign-form" class="as-form" novalidate>
       <label>כותרת<input id="assign-title" type="text" maxlength="160" required autocomplete="off" placeholder="למשל: לבדוק את דף התשלום במובייל"></label>
       <label>למי<select id="assign-agent"></select></label>
       <label>הערה (לא חובה)<textarea id="assign-note" maxlength="300" rows="3" placeholder="פרטים, קישור, הקשר"></textarea></label>
+      <p class="muted">תשלום, פנייה לאחרים, מיזוג ופריסה דורשים אישור נפרד שלך. אין לשלוח סיסמאות כאן.</p>
       <div class="as-err" id="assign-err" role="alert"></div>
-      <div class="modal-actions"><button class="btn btn-gold" id="assign-submit" type="submit">הוספה ללוח</button></div>
+      <div class="modal-actions"><button class="btn btn-gold" id="assign-submit" type="submit">שליחת משימה</button></div>
     </form>
   </div>
 </div>
@@ -240,6 +241,6 @@
 
 
 
-<script type="module" src="./main.js?v=24"></script>
+<script type="module" src="./main.js?v=25"></script>
 </body>
 </html>
