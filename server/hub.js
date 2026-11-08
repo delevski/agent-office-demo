@@ -128,6 +128,9 @@ export class EventHub {
       if (isFeedEvent(r)) {
         ev = { agent: r.agent, kind: r.kind, value: r.value, note: feedNote(r).slice(0, 140), ts: now, id: ++this.seq };
         if (r.task?.link) ev.link = r.task.link;
+        // v6: what the room needs to animate a PR bell or a conversation (also replayed by GET /events)
+        if (r.kind === 'pr.opened' && r.change) { ev.pr = { pr: r.change.pr, repo: r.change.repo, title: r.change.title, link: r.change.link }; if (r.change.link) ev.link = r.change.link; }
+        if (r.kind === 'chat.exchange' && r.chat) { ev.chat = r.chat; if (r.chat.link) ev.link = r.chat.link; }
         this.events.push(ev);
         if (this.events.length > FEED_MAX) this.events = this.events.slice(-FEED_MAX);
         Object.assign(writes, { events: this.events, seq: this.seq });
@@ -138,7 +141,7 @@ export class EventHub {
         this.reviews = EventHub.upsert(this.reviews, r.review, REVIEWS_MAX);
         writes.reviews = this.reviews;
       }
-      if ((r.kind === 'pr.merged' || r.kind === 'deploy') && r.change) newChanges.push(r.change);
+      if ((r.kind === 'pr.merged' || r.kind === 'deploy' || r.kind === 'pr.opened') && r.change) newChanges.push(r.change);
       for (const t of newlyDone(prev, next))
         newChanges.push({ id: `task:${r.agent}:${t.id || t.title}`, type: 'task.done', agent: r.agent, title: t.title || t.id, link: t.link || '', ts: t.ended });
       for (const c of newChanges) this.changes = EventHub.upsert(this.changes, c, CHANGES_MAX);

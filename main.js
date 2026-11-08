@@ -1,6 +1,7 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=23';
+import { createOffice } from './office.js?v=24';
+import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
 import { applyReport, publicView as viewAt, feedNote, isFeedEvent, emptyAgent } from './office-state.js';
@@ -87,9 +88,13 @@ async function boot() {
       onSelect: id => { if (!SHOWCASE) selectAgent(id, true); },
       onBoard: () => { if (!SHOWCASE) openBoard(); },
       onShelf: () => { if (!SHOWCASE) openShelves(); },
-      onFrame: simFrame,
-    }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12 });
+      onFrame: (dt, t) => { simFrame(dt, t); lifeFrame(dt); },
+      onBell: () => { if (!SHOWCASE) manualRing(); },
+      onBellStrike: strength => { bellSound.ring(strength, strength < 0.9 ? -2 : 0); window.__bellStrikes.push({ clock: +office.camera().t, strength }); },
+      onTimeOfDay: onTimeOfDay,
+    }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12, time: QS.get('time') || '' });
     window.__office = office;
+    applyDrawer(false);
     if (!SHOWCASE) (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
     initDemoBoard();
     bootSet(85, 'בודק כניסה…');
@@ -261,7 +266,7 @@ function logLine(agent, kind, val, he, ts) {
   log.prepend(div);
   setTimeout(() => div.classList.remove('fresh'), 1600);
   while (log.children.length > 60) log.lastChild.remove();
-  feedCount.n++;
+  feedCount.n++; feedTotal.n++; renderStrip();
   const pill = $('#feed-pill');
   if (pill && !$('#view-feed').classList.contains('active') && window.innerWidth <= 900) pill.textContent = feedCount.n;
 }
@@ -381,7 +386,9 @@ function applyEventToOffice(a, kind, val, he) {
   const st = statOf(a.id);
   st.events++; st.last = he || kind;
   if (mode === 'demo') bumpKpisForKind(kind, val);
-  if (/deal|payment|won|closed|task\.done|published/.test(kind) && Math.random() < 0.9) office.celebrate(a.id);
+  const rings = ringWorthy(kind, he);
+  if (rings) ringFor(a, rings, he);
+  else if (/deal|payment|won|closed|task\.done|published/.test(kind) && Math.random() < 0.9) office.celebrate(a.id);
   else if (mode === 'demo' && Math.random() < 0.12) {
     if (office.coffeeBreak(a.id, 3 + Math.random() * 3)) st.state = 'walk';
   } else if (mode === 'demo') office.setState(a.id, 'typing');
@@ -456,6 +463,8 @@ function onLiveEvent(ev) {
   if (mode !== 'live' || replay.active) return;
   const a = liveAgentFor(ev.agent);
   applyEventToOffice(a, ev.kind || 'event', ev.value || '', ev.note || ev.kind);
+  // v6: a real conversation (e.g. a Slack thread) plays out in the room
+  if (ev.kind === 'chat.exchange' && ev.chat) office.converse(ev.chat);
 }
 
 const SCENE_STATE = { working: 'typing', idle: 'idle', blocked: 'idle', offline: 'idle' };
@@ -804,7 +813,7 @@ function renderReviewOverlay() {
 
 /* ---------------- 4. what changed today ---------------- */
 let changesToday = [], changesDay = '', changesShown = null;
-const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅' };
+const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅', 'pr.opened': '🔔' };
 async function loadChanges() {
   if (!auth.loggedIn || mode !== 'live') return;
   try { const d = await apiGet('./api/changes'); if (d) { changesToday = d.changes || []; changesDay = d.day || ''; renderChanges(); } } catch (e) { console.warn(e); }
@@ -822,6 +831,7 @@ function changeLine(c) {
     const st = c.status === 'success' ? '<b>פריסה</b>' : c.status === 'failed' ? '<b class="ch-fail">פריסה נכשלה</b>' : '<b class="ch-fail">פריסה בוטלה</b>';
     return `${st} ${esc(c.target)} → ${esc(c.env)}${c.version ? ` <span class="mono muted">${esc(c.version)}</span>` : ''}`;
   }
+  if (c.type === 'pr.opened') return `<b>נפתח</b> PR${c.pr ? ' #' + esc(c.pr) : ''}${c.title ? ' · ' + esc(c.title) : ''}${c.repo ? ` <span class="mono muted">${esc(c.repo)}</span>` : ''}`;
   return `<b>הושלם</b> ${esc(c.title)}`;
 }
 function renderChanges() {
@@ -1377,6 +1387,258 @@ document.querySelectorAll('.navbtn').forEach(b =>
 if (window.innerWidth <= 900) switchView('view-scene');
 else renderPanelDefault();
 setInterval(() => { if (window.innerWidth > 900 && !selectedId) renderPanelDefault(); }, 5000);
+
+
+/* =================== v6: drawer + strip, bell + notifications, conversations, actions, time of day =================== */
+const bellSound = createBell();
+window.__bellStrikes = []; // strike times on the scene clock (used to put the synthesized sound on recordings)
+const LS = { get(k, d) { try { const v = localStorage.getItem('office.' + k); return v === null ? d : v; } catch { return d; } }, set(k, v) { try { localStorage.setItem('office.' + k, String(v)); } catch {} } };
+bellSound.setMuted(LS.get('sound', '1') === '0');
+const unlockAudio = () => bellSound.unlock();
+document.addEventListener('pointerdown', unlockAudio, { capture: true });
+document.addEventListener('keydown', unlockAudio, { capture: true });
+function renderSoundBtn() {
+  const b = $('#btn-sound'); if (!b) return;
+  b.textContent = bellSound.muted ? '🔇' : '🔊';
+  b.setAttribute('aria-pressed', String(!bellSound.muted));
+  b.title = bellSound.muted ? 'צליל הפעמון כבוי' : 'צליל הפעמון פועל';
+}
+$('#btn-sound')?.addEventListener('click', () => {
+  bellSound.setMuted(!bellSound.muted); LS.set('sound', bellSound.muted ? '0' : '1'); renderSoundBtn();
+  if (!bellSound.muted) { bellSound.unlock(); setTimeout(() => bellSound.ring(0.5), 60); }
+});
+renderSoundBtn();
+
+/* ---- browser notifications (Notification API) — asked only on a tap, shown for real events in live mode ---- */
+const canNotify = typeof Notification !== 'undefined';
+function renderNotifyBtn() {
+  const b = $('#btn-notify'); if (!b) return;
+  if (!canNotify) { b.title = 'הדפדפן הזה לא תומך בהתראות'; b.classList.remove('on'); return; }
+  const p = Notification.permission;
+  b.classList.toggle('on', p === 'granted');
+  b.title = p === 'granted' ? 'התראות פועלות (לחיצה: התראת בדיקה)' : p === 'denied' ? 'ההתראות חסומות בהגדרות הדפדפן' : 'הפעלת התראות כשסוכן מסיים משימה או פותח PR';
+}
+$('#btn-notify')?.addEventListener('click', async () => {
+  if (!canNotify) { toast('הדפדפן הזה לא תומך בהתראות. ההודעות יופיעו כאן בחלון.'); return; }
+  if (Notification.permission === 'granted') { notify('🔔 בדיקת התראה', 'ככה תיראה התראה כשסוכן מסיים משימה או פותח PR', true); return; }
+  if (Notification.permission === 'denied') { toast('ההתראות חסומות בהגדרות הדפדפן לאתר הזה', { err: true }); return; }
+  try { await Notification.requestPermission(); } catch {}
+  renderNotifyBtn();
+  if (Notification.permission === 'granted') toast('🔔 התראות הופעלו');
+});
+renderNotifyBtn();
+function notify(title, body, force = false) {
+  if (!canNotify || Notification.permission !== 'granted') return false;
+  if (!force && document.visibilityState === 'visible' && document.hasFocus()) return false; // the toast + sound already say it
+  try {
+    const n = new Notification(title, { body, tag: 'office-' + Date.now(), lang: 'he', dir: 'rtl', silent: false });
+    n.onclick = () => { window.focus(); n.close(); };
+    return true;
+  } catch { return false; }
+}
+
+/* ---- the bell: task done / PR opened → the agent walks to the bell and rings it ---- */
+const bellLog = { today: 0, day: '', lastDemo: -1e9 };
+function ringWorthy(kind, he) {
+  if (mode === 'live') {
+    if (kind === 'pr.opened') return 'pr';
+    if (kind === 'task.done' && !/^נכשל/.test(he || '')) return 'task';
+    return null;
+  }
+  if (/deal\.won|published|task\.done/.test(kind) && simClock - bellLog.lastDemo > 40) { bellLog.lastDemo = simClock; return 'demo'; }
+  return null;
+}
+function ringFor(a, why, he, { silentNotify = false } = {}) {
+  if (!office || !a) return;
+  const d = new Date().toDateString();
+  if (bellLog.day !== d) { bellLog.day = d; bellLog.today = 0; }
+  bellLog.today++;
+  const prNum = why === 'pr' ? (String(he || '').match(/PR\s*#?\s*(\d+)/) || [])[1] : null;
+  const label = why === 'pr' ? `${a.name} · ${prNum ? 'PR #' + prNum : 'PR חדש'}` : why === 'manual' ? `${a.name} מצלצל/ת 🔔` : `${a.name} · ${he || 'סיים משימה'}`;
+  office.ringBell(a.id, label);
+  if (replay.active) return;
+  const title = why === 'pr' ? `🔔 ${a.name} פתח/ה PR` : why === 'manual' ? '' : `🔔 ${a.name} סיים/ה משימה`;
+  if (title) toast(`${title}${he ? ' · ' + String(he).replace(/^סיים:\s*/, '').replace(/\s*🔔$/, '') : ''}`);
+  if (mode === 'live' && title && !silentNotify) notify(title, String(he || '').replace(/\s*🔔$/, ''));
+  renderStrip();
+}
+function manualRing() {
+  const list = actionTargets();
+  const a = list.find(x => x.id === acState.agent) || list[Math.floor(Math.random() * list.length)];
+  if (a) ringFor(a, 'manual', '');
+}
+
+/* ---- drawer (desktop): full-screen room, the panel opens over it; a narrow strip stays when closed ---- */
+let drawerOpen = LS.get('drawer', '1') !== '0';
+function applyDrawer(animate = true) {
+  const lay = $('#layout'), btn = $('#drawer-toggle');
+  lay.classList.toggle('drawer-closed', !drawerOpen);
+  btn.textContent = drawerOpen ? '‹' : '›';
+  btn.setAttribute('aria-expanded', String(drawerOpen));
+  btn.title = drawerOpen ? 'סגירת הפאנל' : 'פתיחת הפאנל';
+  const desktop = window.innerWidth > 900;
+  office?.setInset(desktop ? (drawerOpen ? 396 : 72) : 0);
+  if (drawerOpen && desktop) setTimeout(drawChart, animate ? 340 : 0);
+  renderStrip();
+}
+$('#drawer-toggle')?.addEventListener('click', () => { drawerOpen = !drawerOpen; LS.set('drawer', drawerOpen ? '1' : '0'); applyDrawer(); });
+window.addEventListener('resize', () => applyDrawer(false));
+const STRIP_DOT = { working: '#4ade80', idle: '#f5b301', blocked: '#f97316', offline: '#8b8577', nodata: '#8b8577', typing: '#4ade80', walk: '#4dc9f7', meeting: '#c986f2', celebrate: '#f472b6' };
+function stripStatus(a) {
+  if (mode === 'live') { const v = liveState.get(a.id); return { s: statusOf(v), label: v?.hasData ? (STATUS_HE[v.status] || v.status) : 'עוד לא דיווח', alert: !!alertOf(v) }; }
+  const st = statOf(a.id).state; return { s: st, label: STATE_HE[st] || st, alert: false };
+}
+let stripTimer = 0;
+function renderStrip() {
+  if (stripTimer) return;
+  stripTimer = setTimeout(() => {
+    stripTimer = 0;
+    const el = $('#drawer-strip'); if (!el || window.innerWidth <= 900) return;
+    const list = roster().filter(a => office?.hasAgent(a.id));
+    const alerts = mode === 'live' ? liveAlerts().length : 0;
+    const ti = office?.timeInfo?.() || { hhmm: '--:--', phase: 'day' };
+    const icon = ti.phase === 'night' ? '🌙' : ti.phase === 'day' ? '☀️' : '🌅';
+    const working = list.filter(a => ['working', 'typing'].includes(stripStatus(a).s)).length;
+    // live: the same numbers as the KPI cards (connected · tasks today); demo: leads + revenue
+    const k = mode === 'live' ? Object.fromEntries(liveKpis().map(([id, , v]) => [id, v])) : null;
+    const s1 = k ? [k.online, 'מחוברים'] : [`${working}/${list.length}`, 'עובדים'];
+    const s2 = k ? [k.tasks, 'משימות'] : [String(kpis.leads.v), 'לידים'];
+    el.innerHTML = list.map(a => {
+      const st = stripStatus(a), ini = esc((a.emblem?.mono || a.name || a.id).slice(0, 2));
+      return `<button class="st-ag${st.alert ? ' alert' : ''}" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)};--sd:${STRIP_DOT[st.s] || '#8b8577'}" title="${esc(a.name)} · ${esc(st.label)}" aria-label="${esc(a.name)}: ${esc(st.label)}">${ini}<span class="st-dot"></span></button>`;
+    }).join('') + `<div class="st-sep"></div>
+      <div class="st-stat" title="${esc(s1[1])}"><b>${esc(s1[0])}</b>${esc(s1[1])}</div>
+      <div class="st-stat" title="${esc(s2[1])} היום"><b>${esc(s2[0])}</b>${esc(s2[1])}</div>
+      <div class="st-stat" title="אירועים מאז שהמסך נפתח"><b>${feedTotal.n}</b>אירועים</div>
+      <div class="st-stat" title="צלצולים בפעמון היום"><b>${bellLog.today}</b>🔔</div>
+      ${alerts ? `<div class="st-stat warn" title="התראות"><b>${alerts}</b>⚠</div>` : ''}
+      <div class="st-sep"></div>
+      <div class="st-stat" title="השעה בחדר"><b>${icon}</b>${esc(ti.hhmm)}</div>`;
+    el.querySelectorAll('.st-ag').forEach(b => b.addEventListener('click', () => { drawerOpen = true; LS.set('drawer', '1'); applyDrawer(); selectAgent(b.dataset.id, true); }));
+  }, 120);
+}
+const feedTotal = { n: 0 };
+setInterval(renderStrip, 5000);
+
+/* ---- time of day: the sky behind the room and the page theme follow the room's clock ---- */
+let lastTod = '';
+function onTimeOfDay(info) {
+  const card = document.querySelector('.scene-card');
+  const key = info.night.toFixed(2) + info.phase;
+  if (card && key !== onTimeOfDay.key) {
+    onTimeOfDay.key = key;
+    card.style.setProperty('--night', info.night.toFixed(3));
+    card.style.setProperty('--dawn', (info.phase === 'dawn' || info.phase === 'dusk' ? 1 : 0).toString());
+  }
+  if (info.phase !== lastTod) { lastTod = info.phase; document.body.dataset.tod = info.phase; renderStrip(); }
+}
+
+/* ---- conversations: demo scripts (demo mode) and quiet emoji small talk (live mode, no invented facts) ---- */
+const DEMO_CHATS = [
+  { lines: ['הליד מאתמול חזר אליי', 'מעולה, אני מכינה הצעת מחיר', 'שולחת לך את הפרטים עכשיו'], agreed: true },
+  { lines: ['מי לוקח את הלקוח מחיפה?', 'אני, יש לי חלון ב-14:00', 'סגור, רושמת ביומן'], agreed: true },
+  { lines: ['ראית את הדוח השבועי?', 'כן, המספרים עלו 12% 🚀'], agreed: false },
+  { lines: ['צריך לעדכן את תבנית המייל', 'אני על זה אחרי הצהריים', 'תודה! תעדכן כשמוכן'], agreed: true },
+  { lines: ['קפה?', 'תמיד ☕'], agreed: false },
+  { lines: ['הלקוח ביקש דמו ביום חמישי', 'אני מכין מצגת', 'ואני דואגת לחדר ישיבות'], agreed: true },
+];
+const LIVE_SMALLTALK = [['☕?', '👍'], ['👋', '🙂'], ['🚀', '🔥'], ['💡', '👀'], ['🙌', '😄']];
+const life = { on: LS.get('life', '1') !== '0', nextChat: 22, nextLive: 0, t: 0, lastChat: 0 };
+function pickTwo(list) {
+  if (list.length < 2) return null;
+  const a = list[Math.floor(Math.random() * list.length)];
+  let b = a; while (b === a) b = list[Math.floor(Math.random() * list.length)];
+  return [a, b];
+}
+function demoChat(pair, script) {
+  const s = script || DEMO_CHATS[Math.floor(Math.random() * DEMO_CHATS.length)];
+  const [a, b] = pair;
+  return office.converse({ participants: [a.id, b.id], lines: s.lines.map((text, i) => ({ agent: i % 2 ? b.id : a.id, text })), agreed: s.agreed });
+}
+function lifeFrame(dt) {
+  if (!office || SHOWCASE && QS.get('chat') !== '1' || replay.active || !life.on || paused) return;
+  life.t += dt;
+  if (mode === 'demo') {
+    if (life.t >= life.nextChat && !meetingActive && !office.talking().length) {
+      life.nextChat = life.t + 28 + Math.random() * 25;
+      const pair = pickTwo(AGENTS.filter(a => office.hasAgent(a.id)));
+      if (pair) demoChat(pair);
+    }
+  } else if (mode === 'live') {
+    if (!life.nextLive) life.nextLive = life.t + 90 + Math.random() * 120;
+    if (life.t >= life.nextLive && !office.talking().length) {
+      life.nextLive = life.t + 180 + Math.random() * 240;
+      const here = LIVE.filter(a => office.hasAgent(a.id) && liveState.get(a.id)?.hasData && liveState.get(a.id)?.status !== 'offline');
+      const pair = pickTwo(here);
+      if (pair) { const s = LIVE_SMALLTALK[Math.floor(Math.random() * LIVE_SMALLTALK.length)]; office.converse({ participants: [pair[0].id, pair[1].id], lines: [{ agent: pair[0].id, text: s[0] }, { agent: pair[1].id, text: s[1] }] }); }
+    }
+  }
+}
+
+/* ---- actions menu ---- */
+const acState = { agent: '' };
+function actionTargets() { return roster().filter(a => office?.hasAgent(a.id)); }
+function renderActions() {
+  const list = actionTargets();
+  if (!list.find(a => a.id === acState.agent)) acState.agent = list[0]?.id || '';
+  $('#ac-agents').innerHTML = list.map(a => `<button class="ac-agent" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)}" aria-pressed="${a.id === acState.agent}">${esc(a.name)}</button>`).join('');
+  $('#ac-agents').querySelectorAll('.ac-agent').forEach(b => b.addEventListener('click', () => { acState.agent = b.dataset.id; renderActions(); }));
+  const lifeBtn = document.querySelector('[data-act="life"]');
+  lifeBtn.textContent = life.on ? '🌱 חיים במשרד: פועל' : '🌱 חיים במשרד: כבוי';
+  lifeBtn.setAttribute('aria-pressed', String(life.on));
+  const tm = office?.timeInfo?.().mode || 'real';
+  document.querySelectorAll('#ac-time [data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === (tm === 'real' ? 'real' : acState.time))));
+}
+function toggleActions(open) {
+  const pop = $('#actions-pop'), btn = $('#btn-actions');
+  const show = open ?? pop.classList.contains('hidden');
+  pop.classList.toggle('hidden', !show); btn.setAttribute('aria-expanded', String(show));
+  if (show) renderActions();
+}
+$('#btn-actions')?.addEventListener('click', e => { e.stopPropagation(); toggleActions(); });
+document.addEventListener('pointerdown', e => {
+  const pop = $('#actions-pop');
+  if (!pop.classList.contains('hidden') && !pop.contains(e.target) && e.target.id !== 'btn-actions') toggleActions(false);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleActions(false); });
+let teamMeetTimer = null;
+document.querySelectorAll('#actions-pop [data-act]').forEach(b => b.addEventListener('click', () => {
+  const list = actionTargets(), a = list.find(x => x.id === acState.agent) || list[0];
+  if (!office || !a) return;
+  const act = b.dataset.act;
+  if (act === 'bell') ringFor(a, 'manual', '');
+  else if (act === 'coffee') { if (!office.coffeeBreak(a.id, 6)) toast(`${a.name} כבר בדרך`); }
+  else if (act === 'stretch') { if (!office.micro(a.id, 'stretch')) toast(`${a.name} לא יושב/ת כרגע`); }
+  else if (act === 'celebrate') office.celebrate(a.id);
+  else if (act === 'chat') {
+    const others = list.filter(x => x.id !== a.id);
+    if (!others.length) { toast('צריך לפחות שני סוכנים בחדר'); return; }
+    const b2 = others[Math.floor(Math.random() * others.length)];
+    if (mode === 'demo') demoChat([a, b2]);
+    else office.converse({ participants: [a.id, b2.id], lines: [{ agent: a.id, text: `${b2.name}, רגע? ☕` }, { agent: b2.id, text: 'בטח!' }, { agent: a.id, text: '🙂' }] });
+  }
+  else if (act === 'meeting') {
+    office.gatherAll(); clearTimeout(teamMeetTimer);
+    toast('👥 ישיבת צוות על השטיח');
+    teamMeetTimer = setTimeout(() => office.disperseAll(), 9000);
+  }
+  else if (act === 'home') { clearTimeout(teamMeetTimer); office.disperseAll(); }
+  else if (act === 'life') { life.on = !life.on; LS.set('life', life.on ? '1' : '0'); renderActions(); }
+  if (act !== 'life') toggleActions(false);
+}));
+document.querySelectorAll('#ac-time [data-time]').forEach(b => b.addEventListener('click', () => {
+  acState.time = b.dataset.time;
+  office?.setTime(b.dataset.time === 'real' ? null : b.dataset.time);
+  renderActions(); renderStrip();
+}));
+
+/* ---- camera: rotate buttons + arrow keys (the room turns all the way round) ---- */
+$('#btn-rotl')?.addEventListener('click', () => office?.rotateBy(-Math.PI / 4));
+$('#btn-rotr')?.addEventListener('click', () => office?.rotateBy(Math.PI / 4));
+$('#scene').addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft') { office?.rotateBy(-0.25); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { office?.rotateBy(0.25); e.preventDefault(); }
+});
 
 setPill();
 boot();
