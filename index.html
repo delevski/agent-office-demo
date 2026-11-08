@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./styles.css?v=23">
+<link rel="stylesheet" href="./styles.css?v=24">
 <meta name="theme-color" content="#14110c">
 </head>
 <body>
@@ -38,6 +38,8 @@
     <button class="btn btn-gold demo-only" id="btn-meeting" type="button">☕ ישיבת בוקר</button>
     <button class="btn demo-only" id="btn-pause" type="button" aria-pressed="false">⏸ השהה</button>
     <button class="btn demo-only" id="btn-speed" type="button">מהירות ×1</button>
+    <button class="btn btn-icon" id="btn-sound" type="button" aria-pressed="true" title="צליל הפעמון">🔊</button>
+    <button class="btn btn-icon" id="btn-notify" type="button" title="התראות דפדפן כשסוכן מסיים או פותח PR">🔔</button>
     <button class="btn btn-login" id="btn-login" type="button">🔒 כניסה</button>
   </div>
 </header>
@@ -46,14 +48,18 @@
   <!-- 3D scene -->
   <section id="view-scene" class="view">
     <div class="scene-card card">
+      <div class="scene-sky" aria-hidden="true"><div class="sky-dawn"></div></div>
       <canvas id="scene" tabindex="0" aria-label="סצנת משרד תלת־ממדית. מקשי פלוס ומינוס לזום, אפס לאיפוס מצלמה"></canvas>
       <button class="live-pill" id="live-pill" type="button" title="מעבר בין מצב חי לדמו"><span class="dot"></span> <span class="pill-label">דמו · סימולציה</span></button>
       <div class="scene-tools" role="toolbar" aria-label="מצלמה">
         <button class="tool" id="btn-zoomin" type="button" aria-label="התקרבות" title="התקרבות">+</button>
         <button class="tool" id="btn-zoomout" type="button" aria-label="התרחקות" title="התרחקות">−</button>
+        <button class="tool" id="btn-rotl" type="button" aria-label="סיבוב שמאלה" title="סיבוב החדר">⟲</button>
+        <button class="tool" id="btn-rotr" type="button" aria-label="סיבוב ימינה" title="סיבוב החדר">⟳</button>
         <button class="tool tool-wide" id="btn-resetcam" type="button">איפוס מצלמה</button>
       </div>
       <div class="scene-quick">
+        <button class="btn btn-glass btn-actions" id="btn-actions" type="button" aria-expanded="false" aria-controls="actions-pop">⚡ פעולות</button>
         <button class="btn btn-glass" id="btn-board" type="button">📋 לוח משימות</button>
         <button class="btn btn-glass" id="btn-shelves" type="button">📚 מדף סקילים</button>
         <button class="btn btn-glass live-only" id="btn-reviews" type="button">🔍 ביקורות</button>
@@ -69,7 +75,31 @@
         <span class="rp-time mono" id="replay-time">--:--:--</span>
         <button class="btn btn-ghost rp-exit" id="replay-exit" type="button">✕ חזרה לחי</button>
       </div>
-      <div class="scene-hint">גרירה לסיבוב · צביטה או גלגלת לזום · לחיצה על סוכן, על הלוח או על המדף</div>
+      <div class="scene-hint">גרירה לסיבוב מסביב לחדר · צביטה או גלגלת לזום · לחיצה על סוכן, על הלוח, על המדף או על הפעמון</div>
+      <div class="actions-pop card hidden" id="actions-pop" role="dialog" aria-label="פעולות בחדר">
+        <div class="ac-head"><b>⚡ פעולות בחדר</b><span class="muted">רק אנימציה מקומית · לא נשלח כלום לסוכנים</span></div>
+        <div class="ac-sub">מי?</div>
+        <div class="ac-agents" id="ac-agents"></div>
+        <div class="ac-grid">
+          <button class="btn" type="button" data-act="bell">🔔 לצלצל בפעמון</button>
+          <button class="btn" type="button" data-act="coffee">☕ הפסקת קפה</button>
+          <button class="btn" type="button" data-act="stretch">🤸 מתיחות</button>
+          <button class="btn" type="button" data-act="celebrate">🎉 לחגוג</button>
+          <button class="btn" type="button" data-act="chat">💬 שיחה קצרה</button>
+          <button class="btn" type="button" data-act="meeting">👥 ישיבת צוות</button>
+          <button class="btn" type="button" data-act="home">🏠 כולם לשולחנות</button>
+          <button class="btn" type="button" data-act="life" aria-pressed="true">🌱 חיים במשרד: פועל</button>
+        </div>
+        <div class="ac-sub">שעה בחדר</div>
+        <div class="ac-time" id="ac-time">
+          <button class="btn btn-ghost" type="button" data-time="real">🕒 אמיתית</button>
+          <button class="btn btn-ghost" type="button" data-time="07:00">🌅 בוקר</button>
+          <button class="btn btn-ghost" type="button" data-time="13:00">☀️ צהריים</button>
+          <button class="btn btn-ghost" type="button" data-time="18:15">🌇 שקיעה</button>
+          <button class="btn btn-ghost" type="button" data-time="23:00">🌙 לילה</button>
+          <button class="btn btn-ghost" type="button" data-time="cycle:60">🔄 יום בדקה</button>
+        </div>
+      </div>
       <div class="scene-fallback hidden" id="scene-fallback">
         <p>לא הצלחנו להציג את הסצנה התלת־ממדית.</p>
         <button class="btn" id="scene-retry" type="button">נסה שוב</button>
@@ -77,6 +107,11 @@
     </div>
   </section>
 
+  <!-- v6: the side panel is a drawer over the full-screen room (desktop); a narrow strip stays when it is closed -->
+  <aside id="drawer" class="drawer" aria-label="פאנל מידע">
+  <button class="drawer-toggle" id="drawer-toggle" type="button" aria-expanded="true" aria-controls="drawer-body" title="סגירת הפאנל">‹</button>
+  <div class="drawer-strip" id="drawer-strip" aria-label="מצב בקצרה"></div>
+  <div class="drawer-body" id="drawer-body">
   <!-- Side panel (desktop) / Agents list (mobile tab) -->
   <section id="view-agents" class="view">
     <div class="kpis" id="kpis"></div>
@@ -102,6 +137,12 @@
       <div id="log" class="log" dir="ltr" aria-live="polite"></div>
     </div>
   </section>
+  <footer class="foot">
+  <span id="foot-demo">כל הנתונים, השמות והסכומים מומצאים לצורך <span class="hl">הדגמה</span> בלבד · לא נשלח ולא נחייב שום דבר אמיתי</span>
+  <span id="foot-live" class="hidden">מצב <span class="hl">חי</span> · נתונים אמיתיים שהסוכנים מדווחים על עצמם · גלוי רק אחרי כניסה</span>
+</footer>
+  </div>
+  </aside>
 </main>
 
 <nav id="bottomnav" aria-label="ניווט תחתון">
@@ -197,11 +238,8 @@
   </form>
 </div>
 
-<footer class="foot">
-  <span id="foot-demo">כל הנתונים, השמות והסכומים מומצאים לצורך <span class="hl">הדגמה</span> בלבד · לא נשלח ולא נחייב שום דבר אמיתי</span>
-  <span id="foot-live" class="hidden">מצב <span class="hl">חי</span> · נתונים אמיתיים שהסוכנים מדווחים על עצמם · גלוי רק אחרי כניסה</span>
-</footer>
 
-<script type="module" src="./main.js?v=23"></script>
+
+<script type="module" src="./main.js?v=24"></script>
 </body>
 </html>

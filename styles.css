@@ -551,3 +551,100 @@ body:not(.is-live) .live-only{display:none !important}
 .as-form input,.as-form select,.as-form textarea{font:inherit;font-weight:500;background:#15110b;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 10px}
 .as-form input:focus,.as-form select:focus,.as-form textarea:focus{outline:2px solid var(--gold);outline-offset:1px}
 .as-err{color:#fca5a5;font-size:.8rem;min-height:1em}
+
+
+/* =================== v6: full-screen room, drawer + strip, actions, day/night sky =================== */
+.btn-icon{padding:7px 10px;font-size:1rem}
+.btn-icon[aria-pressed="false"]{opacity:.55}
+.btn-icon.on{border-color:var(--gold);box-shadow:0 0 0 2px #f5b30133}
+/* the sky behind the (transparent) canvas follows the room's clock: --night 0..1 */
+.scene-card{--night:0;--dawn:0}
+.scene-sky{position:absolute;inset:0;pointer-events:none;border-radius:inherit;overflow:hidden;z-index:0}
+.scene-sky::before{content:"";position:absolute;inset:0;
+  background:radial-gradient(120% 90% at 50% 30%,#2b3a66 0%,#141c38 55%,#080b18 100%);opacity:var(--night);transition:opacity 1.2s}
+.scene-sky::after{content:"";position:absolute;inset:-10% 0 0 0;opacity:calc(var(--night) * .9);transition:opacity 1.2s;
+  background-image:
+    radial-gradient(1.6px 1.6px at 12% 18%,#fff 50%,transparent 51%),radial-gradient(1.2px 1.2px at 27% 8%,#fff 50%,transparent 51%),
+    radial-gradient(1.4px 1.4px at 41% 22%,#ffe9b0 50%,transparent 51%),radial-gradient(1px 1px at 56% 12%,#fff 50%,transparent 51%),
+    radial-gradient(1.8px 1.8px at 68% 26%,#fff 50%,transparent 51%),radial-gradient(1.1px 1.1px at 79% 9%,#fff 50%,transparent 51%),
+    radial-gradient(1.3px 1.3px at 91% 19%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 6% 44%,#fff 50%,transparent 51%),
+    radial-gradient(1.2px 1.2px at 94% 48%,#fff 50%,transparent 51%),radial-gradient(1.5px 1.5px at 18% 72%,#fff 50%,transparent 51%),
+    radial-gradient(1px 1px at 86% 78%,#fff 50%,transparent 51%),radial-gradient(1.3px 1.3px at 34% 90%,#ffe9b0 50%,transparent 51%),
+    radial-gradient(1px 1px at 62% 86%,#fff 50%,transparent 51%),radial-gradient(1.4px 1.4px at 48% 4%,#fff 50%,transparent 51%);
+  background-size:520px 420px;animation:twinkle 5s ease-in-out infinite alternate}
+.scene-sky .sky-dawn{position:absolute;inset:0;background:radial-gradient(90% 70% at 20% 10%,#ffb38a55 0%,transparent 70%);opacity:var(--dawn);transition:opacity 1.2s}
+@keyframes twinkle{to{filter:brightness(.6)}}
+#scene{z-index:1}
+.scene-card > :not(canvas):not(.scene-sky){z-index:3}
+.scene-card > #actions-pop{z-index:8}
+.scene-card::after{z-index:2}
+
+/* drawer: on phones it is only a wrapper (the bottom tabs stay as they were) */
+.drawer{display:contents}
+.drawer-toggle,.drawer-strip{display:none}
+.drawer-body{display:contents}
+
+@media (min-width:901px){
+  body{display:flex;flex-direction:column;height:100dvh;overflow:hidden;min-height:0}
+  .topbar{flex:none}
+  #layout{display:block;position:relative;flex:1;min-height:0;max-width:none;width:100%;padding:0;margin:0;--dw:396px}
+  #layout.drawer-closed{--dw:78px}
+  #view-scene{position:absolute;inset:0}
+  .scene-card{aspect-ratio:auto;height:100%;min-height:0;border:0;border-radius:0}
+  #scene,.scene-card::after{border-radius:0}
+  .drawer{display:flex;position:absolute;z-index:6;top:12px;bottom:12px;left:12px;width:372px;transition:width .32s cubic-bezier(.3,.7,.2,1)}
+  .drawer-body{display:flex;flex-direction:column;gap:14px;flex:1;min-width:0;overflow-y:auto;overscroll-behavior:contain;
+    padding:12px;border-radius:20px;border:1px solid #ffffff1a;background:rgba(20,16,11,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 18px 50px #0007;scrollbar-width:thin;transition:opacity .2s}
+  .drawer-body #view-agents,.drawer-body #view-feed{display:flex !important;flex-direction:column;gap:14px}
+  .drawer-body .log{max-height:340px}
+  .drawer-body .foot{padding:4px 6px 2px}
+  .drawer-toggle{display:flex;align-items:center;justify-content:center;position:absolute;top:14px;right:-16px;z-index:2;
+    width:32px;height:44px;border-radius:12px;border:1px solid #ffffff2a;background:#2a2114;color:var(--gold);font-size:1.4rem;font-weight:900;cursor:pointer;box-shadow:0 6px 18px #0006}
+  .drawer-toggle:hover{background:#3a2d18}
+  #layout.drawer-closed .drawer{width:54px}
+  #layout.drawer-closed .drawer-body{display:none}
+  #layout.drawer-closed .drawer-strip{display:flex}
+  .drawer-strip{flex-direction:column;align-items:center;gap:8px;width:54px;padding:62px 0 12px;border-radius:20px;border:1px solid #ffffff1a;
+    background:rgba(20,16,11,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 18px 50px #0007;overflow-y:auto;scrollbar-width:none}
+  .scene-tools{left:calc(var(--dw) + 6px);transition:left .32s cubic-bezier(.3,.7,.2,1)}
+  .scene-quick{left:calc(var(--dw) + 6px);right:auto;bottom:14px;flex-wrap:wrap;transition:left .32s cubic-bezier(.3,.7,.2,1)}
+  .scene-hint{left:calc(50% + var(--dw) / 2);transition:left .32s}
+  .replay-bar{left:calc(var(--dw) + 6px) !important}
+  #layout .actions-pop{left:calc(var(--dw) + 6px);transition:left .32s}
+}
+.st-ag{position:relative;width:38px;height:38px;border-radius:50%;border:2px solid var(--ac);background:color-mix(in srgb,var(--ac) 25%,#14110c);
+  color:#fff;font-weight:900;font-size:.72rem;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex:none}
+.st-ag .st-dot{position:absolute;bottom:-1px;left:-1px;width:12px;height:12px;border-radius:50%;border:2px solid #14110c;background:var(--sd)}
+.st-ag.alert{animation:stpulse 1.2s infinite}
+@keyframes stpulse{50%{box-shadow:0 0 0 5px #ef444455}}
+.st-sep{width:28px;height:1px;background:#ffffff22;margin:2px 0}
+.st-stat{display:flex;flex-direction:column;align-items:center;font-size:.62rem;color:var(--muted);font-weight:700;line-height:1.15;text-align:center}
+.st-stat b{font-size:.9rem;color:var(--text)}
+.st-stat.warn b{color:var(--red)}
+
+/* actions popover */
+.actions-pop{position:absolute;bottom:64px;left:12px;z-index:7;width:min(360px,calc(100% - 24px));padding:12px;display:flex;flex-direction:column;gap:8px;
+  background:rgba(24,19,12,.94);backdrop-filter:blur(12px);box-shadow:0 18px 50px #0009;animation:sheetin .2s ease-out}
+.ac-head{display:flex;flex-direction:column;gap:2px}
+.ac-sub{font-size:.72rem;font-weight:800;color:var(--muted);margin-top:2px}
+.ac-agents{display:flex;flex-wrap:wrap;gap:6px}
+.ac-agent{border:1px solid var(--line);background:#171309;color:var(--text);border-radius:99px;padding:4px 10px;font-size:.78rem;font-weight:700;cursor:pointer}
+.ac-agent[aria-pressed="true"]{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 28%,#171309)}
+.ac-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.ac-grid .btn{justify-content:center;padding:8px 6px;font-size:.8rem}
+.ac-time{display:flex;flex-wrap:wrap;gap:4px}
+.ac-time .btn{padding:5px 8px;font-size:.75rem}
+.ac-time .btn[aria-pressed="true"]{border-color:var(--gold);color:var(--gold)}
+@media (max-width:600px){ #btn-rotl,#btn-rotr{display:none} }
+@media (max-width:900px){
+  .actions-pop{left:10px;right:10px;width:auto;bottom:62px;max-height:70dvh;overflow-y:auto}
+  .btn-icon{padding:6px 8px;font-size:.9rem}
+}
+/* the page itself dims a little at night */
+body[data-tod="night"] .topbar{background:rgba(10,12,24,.88)}
+body[data-tod="night"]{background:radial-gradient(1200px 600px at 70% -10%,#141a33 0%,#0a0c16 55%)}
+@media (prefers-reduced-motion: reduce){
+  .scene-sky::after{animation:none}
+  .drawer,.scene-tools,.scene-quick,.scene-hint,.actions-pop{transition:none !important;animation:none !important}
+}

@@ -10,7 +10,10 @@ export const MAX_TASKS = 30;                       // recent tasks kept per agen
 export const USAGE_DAYS = 14;                      // daily usage history kept per agent
 export const DAILY_DAYS = 14;                      // daily done/failed counters kept per agent (7-day graph)
 export const MAX_FINDINGS = 50;                    // findings kept per review
-export const NEW_KINDS = ['review', 'pr.merged', 'deploy', 'handoff'];
+export const NEW_KINDS = ['review', 'pr.merged', 'deploy', 'handoff', 'pr.opened', 'chat.exchange'];
+export const CHAT_MAX_LINES = 6;                   // lines kept per chat.exchange
+export const CHAT_LINE_MAX = 90;                   // characters per chat line
+export const CHAT_MAX_PEOPLE = 4;                  // participants per chat.exchange
 export const MAX_CHAIN = 8;                        // agents kept in a task's handoff chain
 export const STATUSES = ['working', 'idle', 'blocked', 'offline'];
 export const USAGE_FIELDS = ['messages', 'tokens', 'cost', 'tasks', 'calls', 'pct_of_quota'];
@@ -176,6 +179,59 @@ export function parseMerge(body, sender, now = Date.now()) {
     errors,
   };
 }
+/** pr.opened: a PR was opened (the room rings the bell). */
+export function parsePrOpened(body, sender, now = Date.now()) {
+  const errors = [];
+  const { pr, repo: repoFromPr } = parsePr(body.pr ?? body.pr_number ?? body.pull_request ?? body.number);
+  const repo = repoOf(body.repo ?? body.repository ?? '') || repoFromPr || '';
+  const title = str(body.title ?? body.pr_title, 160);
+  if (!pr && !title) errors.push('pr or title: required');
+  const ts = eventTime(body.ts ?? body.opened_at ?? body.created_at, now, errors);
+  return {
+    change: {
+      id: `pr-open:${repo}#${pr || title}`, type: 'pr.opened', agent: sender || '', pr, repo, title,
+      link: link(body.link ?? body.url) || prLink(repo, pr),
+      author_agent: agentId(body.author_agent ?? body.author) || sender || '', ts,
+    },
+    errors,
+  };
+}
+
+/** chat.exchange: agents talked (e.g. in Slack) and maybe agreed; the room shows it as speech bubbles.
+ *  {participants:["tab","hermes"], lines:[{agent:"tab", text:"..."}], topic?, agreed?, source?, link?} */
+export function parseChat(body, sender, now = Date.now()) {
+  const errors = [];
+  const raw = Array.isArray(body.participants ?? body.agents) ? (body.participants ?? body.agents) : [];
+  const people = [];
+  const addP = id => { const a = agentId(id); if (a && !people.includes(a)) people.push(a); };
+  raw.forEach(addP);
+  const rawLines = Array.isArray(body.lines ?? body.messages) ? (body.lines ?? body.messages) : [];
+  const lines = [];
+  for (const l of rawLines.slice(0, CHAT_MAX_LINES * 3)) {
+    if (!l || typeof l !== 'object') continue;
+    const who = agentId(l.agent ?? l.from ?? l.speaker);
+    const text = str(l.text ?? l.message ?? l.line, 400).replace(/\s+/g, ' ').trim();
+    if (!who || !text) continue;
+    lines.push({ agent: who, text: text.length > CHAT_LINE_MAX ? text.slice(0, CHAT_LINE_MAX - 1) + '…' : text });
+    addP(who);
+    if (lines.length >= CHAT_MAX_LINES) break;
+  }
+  if (sender && !people.length) addP(sender);
+  if (people.length < 2) errors.push('participants: at least two different agents (or lines from two agents)');
+  if (people.length > CHAT_MAX_PEOPLE) errors.push(`participants: at most ${CHAT_MAX_PEOPLE}`);
+  if (!lines.length) errors.push('lines: at least one {agent, text}');
+  const agreedRaw = body.agreed ?? body.agreement ?? body.outcome;
+  const agreed = agreedRaw === true || /^(true|yes|agreed|agree|ok|done)$/i.test(String(agreedRaw ?? ''));
+  const ts = eventTime(body.ts, now, errors);
+  return {
+    chat: {
+      participants: people.slice(0, CHAT_MAX_PEOPLE), lines, topic: str(body.topic ?? body.subject, 100), agreed,
+      source: str(body.source ?? body.channel ?? 'slack', 30), link: link(body.link ?? body.url), ts,
+    },
+    errors,
+  };
+}
+
 const DEPLOY_STATUS = { success: 'success', succeeded: 'success', ok: 'success', done: 'success', live: 'success', failed: 'failed', failure: 'failed', fail: 'failed', error: 'failed', rolled_back: 'rolled_back', rollback: 'rolled_back' };
 /** deploy: something went live (or failed to). */
 export function parseDeploy(body, sender, now = Date.now()) {
@@ -218,6 +274,8 @@ export function parseHandoff(body, sender, now = Date.now()) {
 // so small reporters (curl, hooks) can send whatever is simplest for them.
 const KIND_ALIASES = {
   'task.handoff': 'handoff', 'hand_off': 'handoff', 'handover': 'handoff',
+  'pr.open': 'pr.opened', 'pr.created': 'pr.opened', 'pr.new': 'pr.opened', 'pull_request.opened': 'pr.opened',
+  'chat': 'chat.exchange', 'chat.agreed': 'chat.exchange', 'conversation': 'chat.exchange', 'slack.exchange': 'chat.exchange', 'agreement': 'chat.exchange',
   'pr.review': 'review', 'review.done': 'review', 'pr.merge': 'pr.merged', 'merge': 'pr.merged', 'deployed': 'deploy', 'deploy.done': 'deploy',
   'task.started': 'task.start', 'task.begin': 'task.start',
   'task.completed': 'task.done', 'task.finished': 'task.done', 'task.ok': 'task.done',
@@ -269,6 +327,8 @@ export function normalizeReport(body, now = Date.now()) {
   if (kind === 'handoff') { const p = parseHandoff(body, r.agent, now); r.handoff = p.handoff; if (p.errors.length) r.errors = p.errors; }
   if (kind === 'review') { const p = parseReview(body, r.agent, now); r.review = p.review; if (p.errors.length) r.errors = p.errors; }
   if (kind === 'pr.merged') { const p = parseMerge(body, r.agent, now); r.change = p.change; if (p.errors.length) r.errors = p.errors; }
+  if (kind === 'pr.opened') { const p = parsePrOpened(body, r.agent, now); r.change = p.change; if (p.errors.length) r.errors = p.errors; }
+  if (kind === 'chat.exchange') { const p = parseChat(body, r.agent, now); r.chat = p.chat; if (p.errors.length) r.errors = p.errors; }
   if (kind === 'deploy') { const p = parseDeploy(body, r.agent, now); r.change = p.change; if (p.errors.length) r.errors = p.errors; delete r.status; }
   if (kind === 'task.done' || kind === 'task.failed') {
     if (body.status === 'failed' || kind === 'task.failed') r.taskStatus = 'failed';
@@ -298,6 +358,11 @@ export function feedNote(r) {
     return `ביקורת על PR #${v.pr} של ${v.author_agent}: ${n ? n + ' ממצאים' : 'בלי ממצאים'} · ${verdict}`;
   }
   if (r.kind === 'pr.merged' && r.change) return `מוזג: PR ${r.change.pr ? '#' + r.change.pr : ''}${r.change.title ? ' · ' + r.change.title : ''}`.trim();
+  if (r.kind === 'pr.opened' && r.change) return `פתח PR ${r.change.pr ? '#' + r.change.pr : ''}${r.change.title ? ' · ' + r.change.title : ''} 🔔`.replace(/\s+/g, ' ').trim();
+  if (r.kind === 'chat.exchange' && r.chat) {
+    const c = r.chat;
+    return `שיחה: ${c.participants.join(' ↔ ')}${c.topic ? ' · ' + c.topic : ''}${c.agreed ? ' · הסכימו 🤝' : ''}`;
+  }
   if (r.kind === 'deploy' && r.change) {
     const c = r.change;
     return `${c.status === 'success' ? 'פריסה' : c.status === 'failed' ? 'פריסה נכשלה' : 'פריסה בוטלה'}: ${c.target} → ${c.env}${c.version ? ' · ' + c.version : ''}`;
@@ -411,6 +476,8 @@ export function applyReport(prev, r, now = Date.now()) {
     }
     case 'review':
     case 'pr.merged':
+    case 'pr.opened':
+    case 'chat.exchange':
     case 'deploy':
       // stored by the hub (reviews / change log); for the sender it counts as activity only
       break;

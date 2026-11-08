@@ -120,7 +120,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   /* ---------------- camera: isometric ortho with eased zoom / orbit / pan ---------------- */
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 120);
   const BASE_AZ = Math.PI / 4, BASE_EL = 0.62;
-  const LIM = { az: 0.6, elMin: 0.38, elMax: 1.08, zMin: 3.2, zMax: 30 };
+  const LIM = { az: Infinity, elMin: 0.3, elMax: 1.25, zMin: 3.2, zMax: 30 };
+  const inset = { goal: 0, cur: 0 }; // v6: CSS px covered by the side drawer (left); the room centres in what is left
   const goal = { az: BASE_AZ, el: BASE_EL, zoom: 14, t: new THREE.Vector3(0, 0.8, 0) };
   const cur = { az: BASE_AZ, el: BASE_EL, zoom: 14, t: new THREE.Vector3(0, 0.8, 0) };
   let home = { zoom: 14, t: new THREE.Vector3(0, 0.8, 0), el: BASE_EL };
@@ -131,8 +132,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const { az, el, zoom, t } = state, dist = 40;
     camera.position.set(t.x + dist * Math.cos(el) * Math.cos(az), t.y + dist * Math.sin(el), t.z + dist * Math.cos(el) * Math.sin(az));
     camera.lookAt(t);
-    const a = aspect();
-    camera.left = -zoom * a / 2; camera.right = zoom * a / 2; camera.top = zoom / 2; camera.bottom = -zoom / 2;
+    const a = aspect(), W = zoom * a, shift = (inset.cur / 2) / Math.max(1, canvas.clientWidth) * W;
+    camera.left = -W / 2 - shift; camera.right = W / 2 - shift; camera.top = zoom / 2; camera.bottom = -zoom / 2;
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
   }
@@ -149,9 +150,10 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     }
     const cView = c.clone().applyMatrix4(inv);
     const center = new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, cView.z).applyMatrix4(probe.matrixWorld);
-    return { zoom: Math.max(y1 - y0, (x1 - x0) * widthShare / aspect()), center };
+    const freeA = Math.max(0.3, (canvas.clientWidth - inset.goal) / Math.max(1, canvas.clientHeight));
+    return { zoom: Math.max(y1 - y0, (x1 - x0) * widthShare / freeA), center };
   }
-  function homeEl() { return aspect() < 0.8 ? 0.8 : BASE_EL; } // portrait: a higher camera fills the tall screen
+  function homeEl() { return (canvas.clientWidth - inset.goal) / Math.max(1, canvas.clientHeight) < 0.8 ? 0.8 : BASE_EL; } // portrait: a higher camera fills the tall screen
   function computeHome() {
     const a = aspect();
     const all = fitZoom(-HW - 0.3, HW + 0.3, -HD - 0.3, HD + 0.4);
@@ -165,7 +167,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     LIM.zMax = Math.max(LIM.zMax, home.zoom * 1.15);
   }
   function clampGoal() {
-    goal.az = Math.min(BASE_AZ + LIM.az, Math.max(BASE_AZ - LIM.az, goal.az));
+    // v6: no azimuth limit — the room turns all the way round (walls fade when the camera is behind them)
     goal.el = Math.min(LIM.elMax, Math.max(LIM.elMin, goal.el));
     goal.zoom = Math.min(LIM.zMax, Math.max(LIM.zMin, goal.zoom));
     goal.t.x = Math.min(HW, Math.max(-HW, goal.t.x));
@@ -176,6 +178,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const k = reduced ? 1 : 1 - Math.exp(-dt * 9);
     cur.az += (goal.az - cur.az) * k; cur.el += (goal.el - cur.el) * k;
     cur.zoom += (goal.zoom - cur.zoom) * k; cur.t.lerp(goal.t, k);
+    inset.cur += (inset.goal - inset.cur) * (reduced ? 1 : 1 - Math.exp(-dt * 7));
   }
 
   /* ---------------- lights: soft daylight from the windows + warm interior fill ---------------- */
@@ -274,6 +277,29 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     for (let x = 0; x < w; x += 22) { const bh = 20 + r2() * 46; c.fillRect(x, h - bh, 16, bh); }
   });
   skyTex.wrapS = THREE.RepeatWrapping;
+  // v6: night sky for the windows — deep blue, stars, a crescent moon, a lit city skyline
+  const nightSkyTex = canvasTex(512, 256, (c, w, h) => {
+    const g = c.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#060b1f'); g.addColorStop(0.65, '#14204a'); g.addColorStop(1, '#2b2f5c');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    const rnd = seeded(19);
+    for (let i = 0; i < 140; i++) {
+      const x = rnd() * w, y = rnd() * h * 0.7, r = rnd() < 0.12 ? 1.6 : 0.8;
+      c.fillStyle = `rgba(255,255,240,${0.45 + rnd() * 0.55})`; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    }
+    // crescent moon
+    c.fillStyle = '#fff6d6'; c.beginPath(); c.arc(w * 0.72, 54, 22, 0, 7); c.fill();
+    c.fillStyle = '#0a1230'; c.beginPath(); c.arc(w * 0.72 + 9, 48, 20, 0, 7); c.fill();
+    // city silhouette with lit windows
+    const r2 = seeded(11);
+    for (let x = 0; x < w; x += 22) {
+      const bh = 20 + r2() * 46;
+      c.fillStyle = '#0b1026'; c.fillRect(x, h - bh, 16, bh);
+      for (let yy = h - bh + 5; yy < h - 4; yy += 7) for (let xx = x + 3; xx < x + 14; xx += 5)
+        if (r2() < 0.35) { c.fillStyle = r2() < 0.5 ? '#ffd27a' : '#ffe9b0'; c.fillRect(xx, yy, 2, 3); }
+    }
+  });
+  nightSkyTex.wrapS = THREE.RepeatWrapping;
   const glowTex = canvasTex(128, 128, (c, w) => {
     const g = c.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
     g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,.45)'); g.addColorStop(1, 'rgba(255,255,255,0)');
@@ -295,36 +321,44 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   const floor = add(scene, new THREE.PlaneGeometry(ROOM.w, ROOM.d), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.62, metalness: 0 }), 0, 0.001, 0, { cast: false, rx: -Math.PI / 2 });
   floor.userData.keep = true;
   const T = 0.3; // wall thickness
+  // v6: the two walls are their own groups so the camera can orbit all the way round:
+  // a wall between the camera and the room fades out (and still casts its shadow).
+  const wallB = new THREE.Group(), wallL = new THREE.Group();
   // back wall (z-) : wainscot + upper wall + rail
-  box(stat, ROOM.w + T, 1.05, T, C.wains, 0.0 - T / 2 + T / 2, 0.525, -HD - T / 2, { cast: false });
-  box(stat, ROOM.w + T, ROOM.h - 1.05, T, C.wall, 0, 1.05 + (ROOM.h - 1.05) / 2, -HD - T / 2, { cast: true });
-  box(stat, ROOM.w + T, 0.07, 0.07, C.rail, 0, 1.08, -HD + 0.02, { cast: false });
-  box(stat, ROOM.w + T, 0.12, T + 0.06, C.wallShade, 0, ROOM.h + 0.06, -HD - T / 2, { cast: false });
+  box(wallB, ROOM.w + T, 1.05, T, C.wains, 0.0 - T / 2 + T / 2, 0.525, -HD - T / 2, { cast: false });
+  box(wallB, ROOM.w + T, ROOM.h - 1.05, T, C.wall, 0, 1.05 + (ROOM.h - 1.05) / 2, -HD - T / 2, { cast: true });
+  box(wallB, ROOM.w + T, 0.07, 0.07, C.rail, 0, 1.08, -HD + 0.02, { cast: false });
+  box(wallB, ROOM.w + T, 0.12, T + 0.06, C.wallShade, 0, ROOM.h + 0.06, -HD - T / 2, { cast: false });
   // left wall (x-) with two window openings
   const WIN = [{ z: -2.7, w: 2.3 }, { z: 1.7, w: 2.3 }], WY0 = 1.05, WY1 = 3.05;
   const LX = -HW - T / 2;
-  box(stat, T, 1.05, ROOM.d, C.wainsDark, LX, 0.525, 0, { cast: true });
-  box(stat, T, ROOM.h - WY1, ROOM.d, C.wallShade, LX, WY1 + (ROOM.h - WY1) / 2, 0, { cast: true });
+  box(wallL, T, 1.05, ROOM.d, C.wainsDark, LX, 0.525, 0, { cast: true });
+  box(wallL, T, ROOM.h - WY1, ROOM.d, C.wallShade, LX, WY1 + (ROOM.h - WY1) / 2, 0, { cast: true });
   { // vertical pieces between/around windows
     const edges = [-HD]; WIN.forEach(w => edges.push(w.z - w.w / 2, w.z + w.w / 2)); edges.push(HD);
     for (let i = 0; i < edges.length; i += 2) {
       const a = edges[i], b = edges[i + 1];
-      box(stat, T, WY1 - 1.05, b - a, C.wallShade, LX, 1.05 + (WY1 - 1.05) / 2, (a + b) / 2, { cast: true });
+      box(wallL, T, WY1 - 1.05, b - a, C.wallShade, LX, 1.05 + (WY1 - 1.05) / 2, (a + b) / 2, { cast: true });
     }
   }
-  box(stat, 0.07, 0.07, ROOM.d, C.rail, -HW + 0.02, 1.08, 0, { cast: false });
-  box(stat, T + 0.06, 0.12, ROOM.d + T, C.wallShade, LX, ROOM.h + 0.06, -T / 2, { cast: false });
+  box(wallL, 0.07, 0.07, ROOM.d, C.rail, -HW + 0.02, 1.08, 0, { cast: false });
+  box(wallL, T + 0.06, 0.12, ROOM.d + T, C.wallShade, LX, ROOM.h + 0.06, -T / 2, { cast: false });
   // windows: frame, mullions, sill, glass with drifting sky
   const skyMat = new THREE.MeshBasicMaterial({ map: skyTex, toneMapped: false, color: 0xf2f2f2 });
+  const nightSkyMat = new THREE.MeshBasicMaterial({ map: nightSkyTex, toneMapped: false, transparent: true, opacity: 0, depthWrite: false });
+  const glasses = [];
   for (const w of WIN) {
     const fz = w.z, fw = w.w, fh = WY1 - WY0, fy = (WY0 + WY1) / 2;
     const glass = add(scene, new THREE.PlaneGeometry(fw, fh), skyMat, LX - 0.02, fy, fz, { cast: false, recv: false, ry: Math.PI / 2 });
-    glass.userData.keep = true;
-    for (const dz of [-1, 1]) box(stat, T + 0.08, fh + 0.12, 0.08, C.white, LX, fy, fz + dz * fw / 2);
-    for (const dy of [-1, 1]) box(stat, T + 0.08, 0.08, fw + 0.12, C.white, LX, fy + dy * fh / 2, fz);
-    box(stat, 0.06, fh, 0.05, C.white, LX + 0.02, fy, fz, { cast: true });
-    box(stat, 0.06, 0.05, fw, C.white, LX + 0.02, fy + 0.2, fz, { cast: true });
-    rbox(stat, 0.42, 0.07, fw + 0.36, 0.02, C.white, LX + 0.18, WY0 - 0.02, fz);
+    glass.userData.keep = true; glasses.push(glass);
+    // v6: the night sky sits just inside the day sky and fades in after dusk
+    const ng = add(scene, new THREE.PlaneGeometry(fw, fh), nightSkyMat, LX - 0.015, fy, fz, { cast: false, recv: false, ry: Math.PI / 2 });
+    ng.userData.keep = true; ng.renderOrder = 2; glasses.push(ng);
+    for (const dz of [-1, 1]) box(wallL, T + 0.08, fh + 0.12, 0.08, C.white, LX, fy, fz + dz * fw / 2);
+    for (const dy of [-1, 1]) box(wallL, T + 0.08, 0.08, fw + 0.12, C.white, LX, fy + dy * fh / 2, fz);
+    box(wallL, 0.06, fh, 0.05, C.white, LX + 0.02, fy, fz, { cast: true });
+    box(wallL, 0.06, 0.05, fw, C.white, LX + 0.02, fy + 0.2, fz, { cast: true });
+    rbox(wallL, 0.42, 0.07, fw + 0.36, 0.02, C.white, LX + 0.18, WY0 - 0.02, fz);
   }
   // light shafts through the windows (additive, very soft)
   const shaftMat = new THREE.MeshBasicMaterial({ map: shaftTex, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
@@ -443,10 +477,10 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
 
   /* ---------------- kanban board — centre of the back wall ---------------- */
   const BOARD = { cx: -0.3, cy: 2.18, w: 4.9, h: 2.62, z: -HD + 0.07 };
-  rbox(stat, BOARD.w + 0.22, BOARD.h + 0.22, 0.08, 0.04, C.woodDark, BOARD.cx, BOARD.cy, BOARD.z);
-  rbox(stat, BOARD.w + 0.1, 0.07, 0.16, 0.02, C.woodDark, BOARD.cx, BOARD.cy - BOARD.h / 2 - 0.13, BOARD.z + 0.07); // marker tray
+  rbox(wallB, BOARD.w + 0.22, BOARD.h + 0.22, 0.08, 0.04, C.woodDark, BOARD.cx, BOARD.cy, BOARD.z);
+  rbox(wallB, BOARD.w + 0.1, 0.07, 0.16, 0.02, C.woodDark, BOARD.cx, BOARD.cy - BOARD.h / 2 - 0.13, BOARD.z + 0.07); // marker tray
   for (const [dx, col] of [[-0.9, '#ef4444'], [-0.7, '#2563eb'], [-0.5, '#16a34a']]) {
-    add(stat, new THREE.CylinderGeometry(0.025, 0.025, 0.16, 8), col, BOARD.cx + dx, BOARD.cy - BOARD.h / 2 - 0.08, BOARD.z + 0.09, { rz: Math.PI / 2 });
+    add(wallB, new THREE.CylinderGeometry(0.025, 0.025, 0.16, 8), col, BOARD.cx + dx, BOARD.cy - BOARD.h / 2 - 0.08, BOARD.z + 0.09, { rz: Math.PI / 2 });
   }
   const BW = mobile ? 1024 : 1536, BH = Math.round(BW * BOARD.h / BOARD.w);
   const boardCanvas = document.createElement('canvas'); boardCanvas.width = BW; boardCanvas.height = BH;
@@ -479,23 +513,29 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   cyl(stat, 0.15, 0.15, 0.05, 14, C.woodDark, coCx - 0.5, 1.29, CO.z - 0.12);
   plant(coCx + 0.2, CO.z - 0.08, 0.36, 1).position.y = 0.95;
   // open shelf + TV above the counter
-  rbox(stat, 2.1, 0.06, 0.32, 0.02, C.wood, coCx - 1.05, 2.0, -HD + 0.16);
+  rbox(wallB, 2.1, 0.06, 0.32, 0.02, C.wood, coCx - 1.05, 2.0, -HD + 0.16);
   [['#f7b84d', 0.18], ['#7aa2f7', 0.26], ['#57c98a', 0.2], ['#ef87a8', 0.24]].forEach(([col, hh], i) => {
-    rbox(stat, 0.12, hh, 0.22, 0.02, col, coCx - 1.8 + i * 0.15, 2.03 + hh / 2, -HD + 0.16);
+    rbox(wallB, 0.12, hh, 0.22, 0.02, col, coCx - 1.8 + i * 0.15, 2.03 + hh / 2, -HD + 0.16);
   });
-  plant(coCx - 0.4, -HD + 0.17, 0.26, 0).position.y = 2.03;
+  { const pl = plant(coCx - 0.4, -HD + 0.17, 0.26, 0); pl.position.y = 2.03; wallB.add(pl); }
   const coffeeSpot = new THREE.Vector3(coCx + 0.6, 0, CO.z + 0.9);
 
   // TV with the live bar chart (kept from v1, restyled)
   const scrCanvas = document.createElement('canvas'); scrCanvas.width = 512; scrCanvas.height = 288;
   const scrCtx = scrCanvas.getContext('2d');
   const scrTex = new THREE.CanvasTexture(scrCanvas); scrTex.colorSpace = THREE.SRGBColorSpace;
-  rbox(stat, 2.02, 1.18, 0.07, 0.04, '#1b1c20', coCx + 0.95, 2.62, -HD + 0.05);
+  rbox(wallB, 2.02, 1.18, 0.07, 0.04, '#1b1c20', coCx + 0.95, 2.62, -HD + 0.05);
   const wallScr = add(scene, new THREE.PlaneGeometry(1.9, 1.07), new THREE.MeshBasicMaterial({ map: scrTex, toneMapped: false }), coCx + 0.95, 2.62, -HD + 0.09, { cast: false, recv: false });
   wallScr.userData.keep = true;
-  function drawWallScreen(counts, total) {
+  let lastScreen = [[], 0], screenStamp = '';
+  const todHolder = { s: null }; // filled once the time-of-day block exists
+  function drawWallScreen(counts = lastScreen[0], total = lastScreen[1]) {
+    lastScreen = [counts, total];
     const c = scrCtx, W = 512, H = 288;
-    const g = c.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#1d1a14'); g.addColorStop(1, '#0f0d0a');
+    const ti = todHolder.s;
+    const nightK = ti ? ti.night : 0;
+    const g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, nightK > 0.5 ? '#141a33' : '#1d1a14'); g.addColorStop(1, nightK > 0.5 ? '#0a0d1c' : '#0f0d0a');
     c.fillStyle = g; c.fillRect(0, 0, W, H);
     c.direction = 'rtl'; c.textAlign = 'right';
     c.fillStyle = '#f5b301'; c.font = '800 26px Heebo, sans-serif'; c.fillText('אירועים היום', W - 26, 44);
@@ -507,6 +547,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       const gg = c.createLinearGradient(0, y, 0, y + h); gg.addColorStop(0, shade(a.color, 0.25)); gg.addColorStop(1, a.color);
       c.fillStyle = gg; rr(c, x, y, bw, h, 8); c.fill();
     });
+    if (ti && ti.h >= 0) { // v6: the room's own clock + sun / moon in the corner of the TV
+      const hh = String(Math.floor(ti.h)).padStart(2, '0') + ':' + String(Math.floor((ti.h % 1) * 60)).padStart(2, '0');
+      c.direction = 'ltr'; c.textAlign = 'left'; c.fillStyle = '#f5efe4'; c.font = '800 30px Heebo, sans-serif';
+      c.fillText((ti.phase === 'night' ? '🌙 ' : ti.phase === 'day' ? '☀️ ' : '🌅 ') + hh, 22, 44);
+      screenStamp = hh + ti.phase;
+    }
     scrTex.needsUpdate = true;
   }
   drawWallScreen([], 0);
@@ -528,8 +574,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   clockG.position.set(-HW + 0.04, 2.25, (WIN[0].z + WIN[0].w / 2 + WIN[1].z - WIN[1].w / 2) / 2);
   scene.add(clockG);
   clockG.traverse(o => { o.userData.keep = true; });
-  function tickClock(t) {
-    const d = new Date();
+  function tickClock(t, d = new Date()) {
     const s = d.getSeconds() + d.getMilliseconds() / 1000;
     hourHand.rotation.z = -((d.getHours() % 12) + d.getMinutes() / 60) / 12 * Math.PI * 2;
     minHand.rotation.z = -(d.getMinutes() + s / 60) / 60 * Math.PI * 2;
@@ -764,7 +809,74 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     ring.position.y = 0.03; g.add(ring);
     const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 2.1, 8), new THREE.MeshBasicMaterial({ visible: false }));
     hit.position.y = 1.0; hit.userData.agentId = meta.id; g.add(hit);
-    return { g, meta, own, legs, torso, head, arms, eyes, mug, tag, tagCanvas, tagTex, bubble, warn, alarm, ring, hit, emblemTex, blinkT: Math.random() * 4, alert: null };
+    // v6: nightcap (shown with the pajamas) and a speech bubble for conversations
+    const cap = new THREE.Group(); cap.visible = false; head.add(cap);
+    const capMat = mat('#ffffff');
+    const cone = mesh(new THREE.ConeGeometry(0.3, 0.55, 18, 1, true), capMat, 0, 0.42, -0.05, cap); cone.rotation.x = -0.5; cone.rotation.z = 0.35;
+    mesh(new THREE.TorusGeometry(0.29, 0.06, 8, 22).rotateX(Math.PI / 2), mat('#f7f2e8'), 0, 0.2, 0, cap).rotation.x = -0.18;
+    mesh(new THREE.SphereGeometry(0.075, 10, 8), mat('#f7f2e8'), 0.2, 0.62, -0.25, cap);
+    const sayCanvas = document.createElement('canvas'); sayCanvas.width = 768; sayCanvas.height = 220;
+    const sayTex = new THREE.CanvasTexture(sayCanvas); sayTex.colorSpace = THREE.SRGBColorSpace; sayTex.anisotropy = 4;
+    const say = new THREE.Sprite(new THREE.SpriteMaterial({ map: sayTex, transparent: true, depthTest: false, depthWrite: false, opacity: 0 }));
+    say.center.set(0.5, 0); say.position.y = 2.5; say.renderOrder = 24; say.visible = false; g.add(say);
+    return { g, meta, own, legs, torso, head, arms, eyes, mug, tag, tagCanvas, tagTex, bubble, warn, alarm, ring, hit, emblemTex, blinkT: Math.random() * 4, alert: null,
+      shirt, pants, cap, capMat, say, sayCanvas, sayTex, sayUntil: 0, microNext: 4 + Math.random() * 10, micro: null };
+  }
+
+  /* ---------------- v6: pajamas (striped, in the agent's colour) + speech bubbles ---------------- */
+  const pjTexCache = new Map();
+  function pajamaTex(color) {
+    if (pjTexCache.has(color)) return pjTexCache.get(color);
+    const t = canvasTex(64, 64, (c, w, h) => {
+      c.fillStyle = shade(color, 0.55); c.fillRect(0, 0, w, h);
+      c.fillStyle = shade(color, -0.05); for (let x = 0; x < w; x += 16) c.fillRect(x, 0, 7, h);
+      c.fillStyle = 'rgba(255,255,255,.55)'; for (let y = 6; y < h; y += 16) for (let x = 11; x < w; x += 16) { c.beginPath(); c.arc(x + 0.5, y, 1.6, 0, 7); c.fill(); }
+    }, { repeat: [2, 2] });
+    pjTexCache.set(color, t); return t;
+  }
+  function setPajamas(ch, on) {
+    if (!ch.shirt || !!ch.pj === !!on) return;
+    ch.pj = !!on;
+    const tex = on ? pajamaTex(ch.meta.color) : null;
+    for (const m of [ch.shirt, ch.pants]) {
+      if (!m.userData.day) m.userData.day = m.userData.base.clone();
+      m.map = tex; m.needsUpdate = true;
+      m.userData.base = on ? new THREE.Color('#ffffff') : m.userData.day.clone();
+      m.color.copy(m.userData.base);
+    }
+    ch.capMat.color.set(shade(ch.meta.color, 0.25)); ch.capMat.userData.base = ch.capMat.color.clone();
+    ch.cap.visible = !!on;
+    ch.desatDirty = true; // re-apply the offline greying on the new colours
+    if (ch.g.visible && !reduced && clockT > 1) burst(tmpA.copy(ch.g.position).add(new THREE.Vector3(0, 1.4, 0)), '#ffffff', 6);
+  }
+  function wrapLines(c, text, max, maxLines) {
+    const words = String(text).split(/\s+/), lines = [];
+    let cur = '';
+    for (const w of words) {
+      const t = cur ? cur + ' ' + w : w;
+      if (c.measureText(t).width > max && cur) { lines.push(cur); cur = w; if (lines.length === maxLines) break; }
+      else cur = t;
+    }
+    if (lines.length < maxLines && cur) lines.push(cur);
+    if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) lines[maxLines - 1] = ellipsize(c, lines[maxLines - 1] + '…', max);
+    return lines.slice(0, maxLines);
+  }
+  function sayText(ch, text, seconds = 3) {
+    const c = ch.sayCanvas.getContext('2d'), W = 768, H = 220;
+    c.clearRect(0, 0, W, H);
+    c.font = '700 44px Heebo, sans-serif'; c.direction = 'rtl'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    const lines = wrapLines(c, text, W - 110, 2);
+    const tw = Math.min(W - 20, Math.max(160, ...lines.map(l => c.measureText(l).width)) + 70);
+    const bh = lines.length === 1 ? 104 : 160, x0 = (W - tw) / 2, y0 = H - 34 - bh;
+    c.fillStyle = '#ffffff'; c.strokeStyle = ch.meta.color; c.lineWidth = 7;
+    rr(c, x0, y0, tw, bh, 46); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(W / 2 - 22, y0 + bh - 3); c.lineTo(W / 2, H - 6); c.lineTo(W / 2 + 22, y0 + bh - 3); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(W / 2 - 22, y0 + bh); c.lineTo(W / 2, H - 6); c.lineTo(W / 2 + 22, y0 + bh); c.stroke();
+    c.fillStyle = '#ffffff'; c.fillRect(W / 2 - 19, y0 + bh - 8, 38, 8);
+    c.fillStyle = '#1a1407';
+    lines.forEach((l, i) => c.fillText(l, W / 2, y0 + bh / 2 + (i - (lines.length - 1) / 2) * 52 + 2));
+    ch.sayTex.needsUpdate = true;
+    ch.sayUntil = clockT + seconds; ch.sayT0 = clockT;
   }
 
   /* ---------------- handoff arcs: a glowing arc + a travelling dot from one desk to another ---------------- */
@@ -836,14 +948,16 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     return pts.filter((p, i) => i === pts.length - 1 || p.distanceTo(i ? pts[i - 1] : from) > 0.05);
   }
   function walk(ch, target, then, onArrive) {
+    if (ch.inConvo && then !== 'talk') endConvoFor(ch);
     ch.route = routeTo(ch.g.position, target);
     ch.action = 'walk'; ch.after = then; ch.onArrive = onArrive || null;
     ch.mug.visible = false;
   }
   function applyDesat(ch, k) {
-    if (Math.abs(ch.desat - k) < 0.002) return;
+    if (!ch.desatDirty && Math.abs(ch.desat - k) < 0.002) return;
+    ch.desatDirty = false;
     ch.desat = k;
-    for (const m of ch.own) { if (m.userData.base) m.color.copy(m.userData.base).lerp(GREY, k * 0.75); }
+    for (const m of ch.own) { if (m.userData.base) m.color.copy(m.userData.base).lerp(GREY, k * 0.38); } // v6: offline agents keep their colours (asleep, not grey blobs)
   }
   function setStatus(ch, status) {
     if (!['working', 'idle', 'blocked', 'offline'].includes(status)) status = 'working';
@@ -1074,6 +1188,229 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   /* ---------------- merge the static scenery (big draw-call saver) ---------------- */
   const staticGroup = mergeStatic(stat, scene);
 
+  /* ================= v6: walls that fade for a full orbit · bell corner · time of day ================= */
+  // own materials for everything on a wall, so fading a wall never fades the desks that share a colour
+  function ownMaterials(root) {
+    const map = new Map();
+    root.traverse(o => {
+      if (!o.material) return;
+      if (!map.has(o.material.uuid)) map.set(o.material.uuid, o.material.clone());
+      o.material = map.get(o.material.uuid);
+    });
+  }
+  ownMaterials(wallB); ownMaterials(wallL); ownMaterials(clockG);
+  const mergedB = mergeStatic(wallB, scene), mergedL = mergeStatic(wallL, scene);
+  function makeFader(objs) {
+    const list = [], seen = new Set();
+    for (const root of objs) root.traverse(o => {
+      const m = o.material; if (!m || seen.has(m.uuid)) return;
+      seen.add(m.uuid); list.push({ m, op: m.opacity, tr: m.transparent, dw: m.depthWrite });
+    });
+    return { list, k: 1, objs };
+  }
+  const fadeB = makeFader([mergedB, boardMesh, wallScr, shelfSign]);
+  const fadeL = makeFader([mergedL, clockG, ...glasses.filter(g => g.material !== nightSkyMat)]);
+  function setFade(f, k) {
+    if (Math.abs(f.k - k) < 0.004 && (k === 0 || k === 1 || Math.abs(f.k - k) < 0.0005)) return;
+    f.k = k;
+    for (const e of f.list) {
+      const tr = e.tr || k < 0.999;
+      if (e.m.transparent !== tr) { e.m.transparent = tr; e.m.needsUpdate = true; }
+      e.m.opacity = e.op * k;
+      e.m.depthWrite = k > 0.6 ? e.dw : false;
+      e.m.colorWrite = k > 0.015; // a faded wall still casts its shadow, so the light in the room stays the same
+    }
+  }
+  let wallVis = { b: 1, l: 1 };
+  function updateWalls(dt) {
+    // the inside of the back wall faces +z, the left wall faces +x: hide the one the camera is behind
+    const sb = Math.sin(cur.az), cl = Math.cos(cur.az);
+    const wantB = Math.min(1, Math.max(0, (sb + 0.08) / 0.38)), wantL = Math.min(1, Math.max(0, (cl + 0.08) / 0.38));
+    const k = reduced ? 1 : Math.min(1, dt * 7);
+    wallVis.b += (wantB - wallVis.b) * k; wallVis.l += (wantL - wallVis.l) * k;
+    setFade(fadeB, wallVis.b < 0.01 ? 0 : wallVis.b > 0.99 ? 1 : wallVis.b);
+    setFade(fadeL, wallVis.l < 0.01 ? 0 : wallVis.l > 0.99 ? 1 : wallVis.l);
+    nightSkyMat.opacity = Math.min(1, (todState.night || 0) * 1.15) * wallVis.l; nightSkyMat.colorWrite = wallVis.l > 0.015;
+  }
+
+  /* ---------------- the bell corner (front-right): a brass bell on a wooden frame ---------------- */
+  const BELL = { x: 6.55, z: 3.05, top: 2.25 };
+  const bellRoot = new THREE.Group(); bellRoot.position.set(BELL.x, 0, BELL.z); scene.add(bellRoot);
+  const bellWood = M(C.woodDark), brass = new THREE.MeshStandardMaterial({ color: '#d9a43a', metalness: 0.75, roughness: 0.28, emissive: '#3a2400', emissiveIntensity: 0.25 });
+  rbox(bellRoot, 1.0, 0.08, 0.7, 0.03, bellWood, 0, 0.04, 0);
+  for (const dz of [-0.28, 0.28]) rbox(bellRoot, 0.09, BELL.top, 0.09, 0.02, bellWood, 0, BELL.top / 2, dz);
+  rbox(bellRoot, 0.12, 0.1, 0.78, 0.03, bellWood, 0, BELL.top + 0.02, 0);
+  const bellPivot = new THREE.Group(); bellPivot.position.set(0, BELL.top - 0.04, 0); bellRoot.add(bellPivot);
+  const bellProfile = [[0.0, 0], [0.05, -0.02], [0.09, -0.08], [0.12, -0.2], [0.15, -0.32], [0.2, -0.4], [0.24, -0.45], [0.245, -0.48], [0.0, -0.48]].map(([x, y]) => new THREE.Vector2(x, y));
+  const bellMesh = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 28), brass); bellMesh.castShadow = true;
+  bellMesh.material.side = THREE.DoubleSide; bellPivot.add(bellMesh);
+  const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), M('#6b4a1f')); clapper.position.y = -0.44; bellPivot.add(clapper);
+  const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.9, 6), M('#e9dcc0')); rope.position.y = -0.92; bellPivot.add(rope);
+  const ropeKnot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), M('#c9b58f')); ropeKnot.position.y = -1.38; bellPivot.add(ropeKnot);
+  const bellSign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 96, (c, w, h) => {
+    c.fillStyle = '#2b2118'; rr(c, 4, 4, w - 8, h - 8, 30); c.fill();
+    c.fillStyle = '#f5b301'; c.font = '800 46px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.direction = 'rtl';
+    c.fillText('🔔 פעמון', w / 2, h / 2 + 3);
+  }), transparent: true, depthWrite: false }));
+  bellSign.scale.set(0.8, 0.3, 1); bellSign.position.set(0, BELL.top + 0.32, 0); bellRoot.add(bellSign);
+  const bellHit = new THREE.Mesh(new THREE.BoxGeometry(1.0, BELL.top + 0.5, 0.9), new THREE.MeshBasicMaterial({ visible: false }));
+  bellHit.position.y = (BELL.top + 0.5) / 2; bellHit.userData.pick = 'bell'; bellRoot.add(bellHit);
+  const bellStand = new THREE.Vector3(BELL.x - 0.72, 0, BELL.z + 0.1);
+  // the reason card above the bell ("PR #7 · ...") and the sound rings
+  const bellCardCanvas = document.createElement('canvas'); bellCardCanvas.width = 1024; bellCardCanvas.height = 150;
+  const bellCardTex = new THREE.CanvasTexture(bellCardCanvas); bellCardTex.colorSpace = THREE.SRGBColorSpace;
+  const bellCard = new THREE.Sprite(new THREE.SpriteMaterial({ map: bellCardTex, transparent: true, depthTest: false, depthWrite: false, opacity: 0 }));
+  bellCard.center.set(0.5, 0); bellCard.renderOrder = 22; bellCard.position.set(BELL.x, BELL.top + 0.7, BELL.z); bellCard.visible = false; scene.add(bellCard);
+  function drawBellCard(text, color) {
+    const c = bellCardCanvas.getContext('2d'), W = 1024, H = 150;
+    c.clearRect(0, 0, W, H);
+    c.font = '800 50px Heebo, sans-serif'; c.direction = 'rtl'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    const t = ellipsize(c, text, W - 90), tw = Math.min(W - 16, c.measureText(t).width + 80);
+    c.fillStyle = 'rgba(26,20,7,.92)'; rr(c, (W - tw) / 2, 10, tw, H - 30, 40); c.fill();
+    c.strokeStyle = color || '#f5b301'; c.lineWidth = 6; rr(c, (W - tw) / 2, 10, tw, H - 30, 40); c.stroke();
+    c.fillStyle = '#fff6e0'; c.fillText(t, W / 2, H / 2 - 4);
+    bellCardTex.needsUpdate = true;
+  }
+  const waves = [];
+  for (let i = 0; i < 3; i++) {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.018, 6, 40), new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: 0, toneMapped: false, depthWrite: false, blending: THREE.AdditiveBlending }));
+    m.position.set(BELL.x, BELL.top - 0.3, BELL.z); m.rotation.y = Math.PI / 2; m.userData.life = 0; m.visible = false; scene.add(m); waves.push(m);
+  }
+  const bell = { ang: 0, vel: 0, queue: [], busy: null, cardUntil: 0, rings: 0 };
+  function strikeBell(strength = 1, color) {
+    bell.vel += (reduced ? 0.9 : 3.2) * strength;
+    bell.rings++;
+    if (!reduced) for (const w of waves) if (w.userData.life <= 0) { w.userData.life = 1; w.visible = true; w.material.color.set(color || '#ffd36b'); break; }
+    burst(new THREE.Vector3(BELL.x, BELL.top - 0.25, BELL.z), color || '#f5b301', reduced ? 0 : 8);
+    hooks.onBellStrike?.(strength);
+  }
+  function updateBell(dt) {
+    // a damped pendulum, pushed by each strike
+    bell.vel += (-bell.ang * 26 - bell.vel * 2.4) * dt;
+    bell.ang += bell.vel * dt;
+    bellPivot.rotation.x = bell.ang * 0.35;
+    clapper.position.z = -Math.sin(bell.ang * 1.4) * 0.06;
+    for (const w of waves) {
+      if (w.userData.life <= 0) continue;
+      w.userData.life -= dt * 0.9;
+      const k = 1 - w.userData.life;
+      w.scale.setScalar(1 + k * 4.5);
+      w.material.opacity = Math.max(0, w.userData.life) * 0.8;
+      if (w.userData.life <= 0) w.visible = false;
+    }
+    const show = clockT < bell.cardUntil;
+    const target = show ? 1 : 0;
+    bellCard.material.opacity += (target - bellCard.material.opacity) * Math.min(1, dt * 6);
+    bellCard.visible = bellCard.material.opacity > 0.02;
+    const tagH = Math.min(0.7, (mobile ? 30 : 34) / Math.max(200, canvas.clientHeight) * cur.zoom);
+    bellCard.scale.set(tagH * 1.25 * (1024 / 150), tagH * 1.25, 1);
+    if (!bell.busy && bell.queue.length) startRing(bell.queue.shift());
+  }
+  function startRing(job) {
+    const ch = job.id ? agents.get(job.id) : null;
+    bell.busy = job;
+    drawBellCard(job.label || '🔔', ch?.meta.color);
+    bell.cardUntil = clockT + 6.5;
+    if (!ch || !ch.g.visible || reduced) { // nobody to walk there (or reduced motion): the bell rings by itself
+      strikeBell(1, ch?.meta.color);
+      setTimeout(() => strikeBell(0.7, ch?.meta.color), reduced ? 0 : 700);
+      bell.busy = null;
+      return;
+    }
+    ch.mug.visible = false; ch.micro = null; endConvoFor(ch);
+    walk(ch, bellStand, 'bell', () => { ch.bellT = 0; ch.bellHits = 0; });
+  }
+
+  /* ---------------- time of day: real local clock (or ?time=HH:MM), smooth dawn / day / dusk / night ---------------- */
+  // presets: light, sky tint, interior lamps and the night factor (pajamas, stars)
+  const TOD = {
+    night:   { sun: 0.22, sunC: '#8fa6ff', hemi: 0.42, hemiS: '#7f8fc4', hemiG: '#2b2233', fill: 0.18, exp: 1.0,  sky: '#ffffff', night: 1,    lamps: 1,   shaft: 0 },
+    dawn:    { sun: 1.5,  sunC: '#ffb489', hemi: 0.95, hemiS: '#ffd6bf', hemiG: '#7a5c5c', fill: 0.35, exp: 1.06, sky: '#ffb08a', night: 0.35, lamps: 0.55, shaft: 0.65 },
+    morning: { sun: 2.35, sunC: '#ffeccd', hemi: 1.15, hemiS: '#fff6e8', hemiG: '#9a7b5c', fill: 0.5,  exp: 1.12, sky: '#fff1df', night: 0,    lamps: 0.08, shaft: 1.1 },
+    day:     { sun: 2.6,  sunC: '#ffe2b8', hemi: 1.25, hemiS: '#fff3e0', hemiG: '#9a7b5c', fill: 0.55, exp: 1.14, sky: '#f2f2f2', night: 0,    lamps: 0,   shaft: 1 },
+    dusk:    { sun: 1.35, sunC: '#ff9152', hemi: 0.8,  hemiS: '#ffbf9e', hemiG: '#5e4250', fill: 0.3,  exp: 1.05, sky: '#ff9a74', night: 0.45, lamps: 0.75, shaft: 0.55 },
+  };
+  const TOD_STOPS = [[0, 'night'], [5.1, 'night'], [6.1, 'dawn'], [7.6, 'morning'], [10.5, 'day'], [16.3, 'day'], [17.7, 'dusk'], [18.9, 'night'], [24, 'night']];
+  const todCol = { sunC: new THREE.Color(), hemiS: new THREE.Color(), hemiG: new THREE.Color(), sky: new THREE.Color() };
+  const ca = new THREE.Color(), cb = new THREE.Color();
+  function todAt(h) {
+    let i = 0; while (i < TOD_STOPS.length - 2 && h >= TOD_STOPS[i + 1][0]) i++;
+    const [h0, n0] = TOD_STOPS[i], [h1, n1] = TOD_STOPS[i + 1];
+    let k = h1 > h0 ? (h - h0) / (h1 - h0) : 0; k = k * k * (3 - 2 * k);
+    const A = TOD[n0], B = TOD[n1], out = { phase: k < 0.5 ? n0 : n1, from: n0, to: n1, k };
+    for (const key of Object.keys(A)) {
+      if (typeof A[key] === 'number') out[key] = A[key] + (B[key] - A[key]) * k;
+      else out[key] = todCol[key].copy(ca.set(A[key])).lerp(cb.set(B[key]), k);
+    }
+    return out;
+  }
+  // interior lights for the evening (no shadows: cheap)
+  const lampA = new THREE.PointLight(0xffc77a, 0, 11, 1.6); lampA.position.set(-1.8, 2.9, -0.4); scene.add(lampA);
+  const lampB = new THREE.PointLight(0xffc77a, 0, 11, 1.6); lampB.position.set(3.2, 2.9, 0.2); scene.add(lampB);
+  const lampC = new THREE.PointLight(0xffb866, 0, 7, 1.6); lampC.position.set(-HW + 0.8, 1.9, 4.7); scene.add(lampC);
+  // a pendant lamp over each desk pod (dark by day, glowing at night)
+  const pendants = [];
+  for (const x of COLS) {
+    const z = (ROWS[0].z + ROWS[1].z) / 2;
+    const pg = new THREE.Group(); pg.visible = false; scene.add(pg); // only lit (and shown) in the evening
+    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.9, 4), M('#2b2620')); cord.position.set(x, ROOM.h - 0.1, z); pg.add(cord);
+    const shadeM = new THREE.MeshStandardMaterial({ color: '#2f3a36', emissive: '#ffcf80', emissiveIntensity: 0, roughness: 0.5, side: THREE.DoubleSide });
+    const sh = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.26, 20, 1, true), shadeM); sh.position.set(x, ROOM.h - 0.66, z); pg.add(sh);
+    const bulb = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffcf80, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    bulb.scale.set(1.6, 1.6, 1); bulb.position.set(x, ROOM.h - 0.8, z); pg.add(bulb);
+    pendants.push({ g: pg, shadeM, bulb });
+  }
+  const timeCtl = { mode: 'real', offset: 0, cycle: 0, cycleStart: 0 }; // mode: real | fixed | cycle
+  function virtualNow() {
+    if (timeCtl.mode === 'cycle') {
+      const hrs = (timeCtl.cycleStart + (clockT - timeCtl.cycleT0) / timeCtl.cycle * 24) % 24;
+      const d = new Date(); d.setHours(Math.floor(hrs), Math.floor((hrs % 1) * 60), Math.floor((hrs * 60 % 1) * 60), 0); return d;
+    }
+    return new Date(Date.now() + (timeCtl.mode === 'fixed' ? timeCtl.offset : 0));
+  }
+  function parseHHMM(v) {
+    const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(String(v || '').trim()); if (!m) return null;
+    const h = +m[1], mi = +(m[2] || 0); return h < 24 && mi < 60 ? h + mi / 60 : null;
+  }
+  function setTime(v) {
+    if (v === null || v === undefined || v === '' || v === 'real') { timeCtl.mode = 'real'; timeCtl.offset = 0; }
+    else if (/^cycle/.test(String(v))) { timeCtl.mode = 'cycle'; timeCtl.cycle = Number(String(v).split(':')[1]) || 60; timeCtl.cycleT0 = clockT; timeCtl.cycleStart = 5; }
+    else {
+      const h = parseHHMM(v); if (h === null) return false;
+      const now = new Date(), cur = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+      timeCtl.mode = 'fixed'; timeCtl.offset = Math.round((h - cur) * 3600_000);
+    }
+    todState.force = true;
+    return true;
+  }
+  const todState = { h: -1, night: 0, pj: null, force: true, last: 0, phase: '' };
+  todHolder.s = todState;
+  function updateTimeOfDay(dt) {
+    const d = virtualNow();
+    const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+    // re-evaluate a few times a second (and every frame while cycling)
+    if (!todState.force && timeCtl.mode !== 'cycle' && clockT - todState.last < 0.5) return d;
+    todState.force = false; todState.last = clockT; todState.h = h;
+    const s = todAt(h);
+    sun.intensity = s.sun; sun.color.copy(s.sunC);
+    hemi.intensity = s.hemi; hemi.color.copy(s.hemiS); hemi.groundColor.copy(s.hemiG);
+    fill.intensity = s.fill; renderer.toneMappingExposure = s.exp;
+    skyMat.color.copy(s.sky);
+    lampA.intensity = lampB.intensity = s.lamps * 9; lampC.intensity = s.lamps * 5;
+    for (const p of pendants) { p.shadeM.emissiveIntensity = s.lamps * 1.4; p.bulb.material.opacity = s.lamps * 0.7; p.g.visible = s.lamps > 0.04; }
+    todState.shaft = s.shaft; todState.night = s.night; todState.lamps = s.lamps;
+    const wantPj = s.night > 0.6;
+    if (todState.pj !== wantPj) { todState.pj = wantPj; for (const ch of agents.values()) setPajamas(ch, wantPj); }
+    const phase = h < 5.1 || h >= 18.9 ? 'night' : h < 7.6 ? 'dawn' : h < 16.3 ? 'day' : 'dusk';
+    todState.phase = phase;
+    const stamp = String(Math.floor(h)).padStart(2, '0') + ':' + String(Math.floor((h % 1) * 60)).padStart(2, '0') + phase;
+    if (stamp !== screenStamp) drawWallScreen();
+    {
+      hooks.onTimeOfDay?.({ h, phase, night: s.night, lamps: s.lamps, date: d, mode: timeCtl.mode });
+    }
+    return d;
+  }
+
   /* ---------------- interaction: drag orbit · right/2-finger pan · wheel/pinch zoom · tap ---------------- */
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -1115,7 +1452,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   function pick(x, y) {
     ray.setFromCamera(screenToNdc(x, y), cam);
     const list = [...agents.values()].filter(a => a.g.visible).map(a => a.hit);
-    list.push(boardMesh, shelfHit);
+    if (wallVis.b > 0.5) list.push(boardMesh); list.push(shelfHit, bellHit);
     const hits = ray.intersectObjects(list, false);
     return hits[0]?.object || null;
   }
@@ -1157,6 +1494,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       if (o?.userData.agentId) hooks.onSelect?.(o.userData.agentId);
       else if (o?.userData.pick === 'board') hooks.onBoard?.();
       else if (o?.userData.pick === 'shelf') hooks.onShelf?.();
+      else if (o?.userData.pick === 'bell') hooks.onBell?.();
     }
     if (ptrs.size === 0) gesture = null;
     else if (ptrs.size === 1) gesture = { type: 'orbit', moved: 99 };
@@ -1193,6 +1531,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   /* ---------------- animation ---------------- */
   let clockT = 0, running = true, frames = 0, perfAcc = 0, perfN = 0, lowered = 0;
   const P = opts.loopSeconds || 12; // showcase camera loop length (seamless)
+  if (opts.time) setTime(opts.time);
   const tmpA = new THREE.Vector3();
   function updateCharacter(ch, dt, t) {
     ch.stateT += dt;
@@ -1219,6 +1558,33 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       legs[0].rotation.x = Math.sin(w) * 0.6; legs[1].rotation.x = -Math.sin(w) * 0.6;
       arms[0].rotation.x = -Math.sin(w) * 0.5; arms[1].rotation.x = Math.sin(w) * 0.5;
       torso.rotation.x = 0.04; head.rotation.set(0, 0, 0);
+    } else if (ch.action === 'bell') { // v6: at the bell — reach for the rope, two pulls, then back to the desk
+      standPose(ch); p.y = 0;
+      ch.bellT = (ch.bellT || 0) + dt;
+      ch.g.rotation.y += angDiff(Math.PI / 2, ch.g.rotation.y) * Math.min(1, dt * 8);
+      const bt = ch.bellT;
+      const pull = bt < 0.45 ? bt / 0.45 : bt < 0.75 ? 1 - (bt - 0.45) / 0.3 * 0.6 : bt < 1.1 ? 0.4 + (bt - 0.75) / 0.35 * 0.6 : bt < 1.4 ? 1 - (bt - 1.1) / 0.3 * 0.6 : Math.max(0, 0.4 - (bt - 1.4) * 0.6);
+      arms[1].rotation.x = -0.2 - pull * 2.5; arms[1].rotation.z = 0.12;
+      arms[0].rotation.x = -0.15; head.rotation.x = -0.25 * pull;
+      if (ch.bellHits === 0 && bt > 0.72) { ch.bellHits = 1; strikeBell(1, ch.meta.color); }
+      if (ch.bellHits === 1 && bt > 1.38) { ch.bellHits = 2; strikeBell(0.75, ch.meta.color); }
+      if (bt > 2.3) { ch.bellT = 0; bell.busy = null; ch.action = 'stand'; goHome(ch); }
+    } else if (ch.action === 'talk') { // v6: in a conversation — face the group, gesture while speaking, nod while listening
+      standPose(ch); p.y = 0;
+      if (ch.faceTo) ch.g.rotation.y += angDiff(Math.atan2(ch.faceTo.x - p.x, ch.faceTo.z - p.z), ch.g.rotation.y) * Math.min(1, dt * 6);
+      head.position.y = 0.88 + breathe;
+      const speaking = ch.sayUntil > clockT && ch.speaking;
+      if (ch.agreeUntil > clockT) { // handshake / thumbs up
+        arms[1].rotation.x = -1.35 + Math.sin(t * 14) * 0.18; arms[1].rotation.z = 0.1; arms[0].rotation.x = -0.1;
+        head.rotation.x = Math.sin(t * 7) * 0.08;
+      } else if (speaking && !reduced) {
+        arms[0].rotation.x = -0.5 + Math.sin(t * 5.2 + ch.stateT) * 0.35; arms[1].rotation.x = -0.7 + Math.cos(t * 4.4) * 0.4;
+        arms[0].rotation.z = -0.25; arms[1].rotation.z = 0.3;
+        head.rotation.x = Math.sin(t * 3.1) * 0.05; head.rotation.z = Math.sin(t * 1.7) * 0.06;
+      } else {
+        arms[0].rotation.x = -0.1; arms[1].rotation.x = -0.1; arms[0].rotation.z = -0.18; arms[1].rotation.z = 0.18;
+        head.rotation.x = reduced ? 0 : Math.max(0, Math.sin(t * 2.6 + ch.stateT)) * 0.12; head.rotation.z = 0;
+      }
     } else if (ch.action === 'celebrate') {
       p.y = (ch.standing || ch.wasStanding ? 0 : SEAT_Y) + Math.abs(Math.sin(t * 8)) * 0.35;
       standPose(ch); arms[0].rotation.x = 0; arms[1].rotation.x = 0;
@@ -1269,8 +1635,26 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
         head.rotation.x = 0.35; head.rotation.y = 0; head.rotation.z = 0.25;
         bubble = zzzTex;
       }
+      // v6: little idle behaviours on top of the pose — stretch, sip coffee, look around, yawn at night
+      if (!reduced && (st === 'working' || st === 'idle')) {
+        if (!ch.micro && clockT > ch.microNext) {
+          const pool = todState.night > 0.6 ? ['yawn', 'stretch', 'look', 'sip'] : ['stretch', 'sip', 'look', 'look', 'sip', 'lean'];
+          startMicro(ch, pool[Math.floor(Math.random() * pool.length)]);
+        }
+        if (ch.micro) applyMicro(ch, t, dt);
+      }
       ch.g.rotation.y += angDiff(ch.homeRot, ch.g.rotation.y) * Math.min(1, dt * 8);
     }
+    // v6: speech bubble (constant on-screen size, pops in, fades out)
+    if (ch.sayUntil > clockT - 0.4) {
+      const tagH = Math.min(0.9, (mobile ? 34 : 40) / Math.max(200, canvas.clientHeight) * cur.zoom);
+      const left = ch.sayUntil - clockT, age = clockT - (ch.sayT0 || 0);
+      const pop = reduced ? 1 : Math.min(1, age / 0.18);
+      ch.say.visible = true;
+      ch.say.material.opacity = left < 0 ? Math.max(0, 1 + left / 0.4) : 1;
+      ch.say.scale.set(tagH * 1.7 * (768 / 220) * (0.85 + pop * 0.15), tagH * 1.7 * (0.85 + pop * 0.15), 1);
+      ch.say.position.y = 2.02 - p.y + tagH * 1.0;
+    } else if (ch.say.visible) ch.say.visible = false;
     // status bubble bobbing
     if (bubble && !reduced) {
       ch.bubble.visible = true; ch.bubble.material.map = bubble;
@@ -1308,6 +1692,104 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     if (next === 'coffee') ch.g.rotation.y = Math.PI; // face the machine
     const cb = ch.onArrive; ch.onArrive = null; cb?.(ch);
   }
+  /* ---------------- v6: idle micro-behaviours ---------------- */
+  const MICRO_DUR = { stretch: 2.4, sip: 2.8, look: 2.6, yawn: 2.2, lean: 3.2 };
+  function startMicro(ch, type) {
+    ch.micro = { type, t: 0, dur: MICRO_DUR[type] || 2.4 };
+    ch.microNext = clockT + MICRO_DUR[type] + 7 + Math.random() * 14;
+  }
+  function applyMicro(ch, t, dt) {
+    const m = ch.micro; m.t += dt;
+    const u = Math.min(1, m.t / m.dur), k = Math.sin(u * Math.PI); // 0 → 1 → 0
+    const { arms, torso, head } = ch;
+    if (m.type === 'stretch') {
+      arms[0].rotation.x = arms[0].rotation.x * (1 - k) - 2.9 * k; arms[1].rotation.x = arms[1].rotation.x * (1 - k) - 2.9 * k;
+      arms[0].rotation.z = -0.12 - 0.35 * k; arms[1].rotation.z = 0.12 + 0.35 * k;
+      torso.rotation.x = torso.rotation.x * (1 - k) - 0.2 * k; head.rotation.x = -0.25 * k;
+    } else if (m.type === 'sip') {
+      ch.mug.visible = true;
+      const s = Math.min(1, k * 1.6);
+      arms[1].rotation.x = arms[1].rotation.x * (1 - s) + (-2.05) * s; arms[1].rotation.z = 0.15;
+      head.rotation.x = -0.14 * s;
+      if (u >= 1 && ch.status !== 'idle') ch.mug.visible = false;
+    } else if (m.type === 'look') {
+      head.rotation.y = Math.sin(u * Math.PI * 2) * 0.8 * Math.min(1, k * 2); head.rotation.x = -0.05;
+      torso.rotation.y = Math.sin(u * Math.PI * 2) * 0.15 * k;
+    } else if (m.type === 'yawn') {
+      arms[0].rotation.x = arms[0].rotation.x * (1 - k) - 2.1 * k; arms[0].rotation.z = -0.5 * k;
+      head.rotation.x = -0.35 * k; torso.rotation.x = -0.1 * k;
+    } else if (m.type === 'lean') {
+      torso.rotation.x = torso.rotation.x * (1 - k) - 0.22 * k;
+      arms[0].rotation.x = arms[0].rotation.x * (1 - k) - 2.6 * k; arms[1].rotation.x = arms[1].rotation.x * (1 - k) - 2.6 * k;
+      arms[0].rotation.z = -0.9 * k; arms[1].rotation.z = 0.9 * k; // hands behind the head
+      head.rotation.x = -0.15 * k;
+    }
+    if (u >= 1) { ch.micro = null; torso.rotation.y = 0; }
+  }
+
+  /* ---------------- v6: conversations (e.g. a Slack thread where agents agreed) ---------------- */
+  const convo = { cur: null, queue: [] };
+  const TALK_Z = (ROWS[0].z + 0.52 + ROWS[1].z - 0.52) / 2; // the walkway between the two desk rows
+  function converse(spec) {
+    const ids = [...new Set((spec.participants || []).concat((spec.lines || []).map(l => l.agent)))];
+    const present = ids.map(id => agents.get(id)).filter(ch => ch && ch.g.visible && ch.action !== 'bell' && !(bell.busy && bell.busy.id === ch.meta.id));
+    const lines = (spec.lines || []).filter(l => l && l.text && agents.get(l.agent)?.g.visible);
+    if (!present.length || !lines.length) return false;
+    if (present.length === 1) { // only one of them is in the room: they say their line at the desk
+      const ch = present[0], l = lines.find(x => x.agent === ch.meta.id) || lines[0];
+      sayText(ch, l.text, 4); return true;
+    }
+    if (convo.cur) { if (convo.queue.length < 3) convo.queue.push(spec); return true; }
+    const mx = present.reduce((s, ch) => s + ch.seat.x, 0) / present.length;
+    const center = new THREE.Vector3(Math.min(5.2, Math.max(-5.2, mx)), 0, TALK_Z);
+    const n = present.length, r = n === 2 ? 0.6 : 0.72;
+    const c = { members: present, lines, idx: 0, nextAt: 0, phase: 'gather', center, agreed: !!spec.agreed, startT: clockT, endAt: 0 };
+    convo.cur = c;
+    present.forEach((ch, i) => {
+      const a = n === 2 ? (i ? 0 : Math.PI) : (i / n) * Math.PI * 2 + 0.4;
+      const spot = new THREE.Vector3(center.x + Math.cos(a) * r, 0, center.z + Math.sin(a) * r * 0.8);
+      ch.micro = null; ch.mug.visible = false; ch.inConvo = c; ch.faceTo = center;
+      if (reduced) { ch.g.position.copy(spot); ch.action = 'talk'; ch.arrived = true; }
+      else { ch.arrived = false; walk(ch, spot, 'talk', () => { ch.arrived = true; }); }
+    });
+    return true;
+  }
+  function endConvoFor(ch) {
+    const c = ch.inConvo; if (!c) return;
+    ch.inConvo = null; ch.speaking = false; ch.sayUntil = 0; ch.agreeUntil = 0;
+    c.members = c.members.filter(x => x !== ch);
+    if (c.members.length < 2) finishConvo(c);
+  }
+  function finishConvo(c) {
+    for (const ch of c.members) { ch.inConvo = null; ch.speaking = false; ch.agreeUntil = 0; if (ch.action === 'talk' || ch.action === 'walk') goHome(ch); }
+    c.members = [];
+    if (convo.cur === c) { convo.cur = null; const next = convo.queue.shift(); if (next) converse(next); }
+  }
+  function updateConvo() {
+    const c = convo.cur; if (!c) return;
+    if (c.phase === 'gather') {
+      if (c.members.every(ch => ch.arrived) || clockT - c.startT > 9) { c.phase = 'talk'; c.nextAt = clockT + 0.3; }
+      return;
+    }
+    if (c.phase === 'talk' && clockT >= c.nextAt) {
+      if (c.idx >= c.lines.length) {
+        if (c.agreed) {
+          c.phase = 'agree';
+          for (const ch of c.members) { sayText(ch, '🤝 סגור!', 2.4); ch.speaking = false; ch.agreeUntil = clockT + 2.2; burst(tmpA.copy(ch.g.position).add(new THREE.Vector3(0, 1.8, 0)), ch.meta.color, reduced ? 0 : 6); }
+          c.endAt = clockT + 2.6;
+        } else { c.phase = 'end'; c.endAt = clockT + 0.8; }
+        return;
+      }
+      const l = c.lines[c.idx++];
+      const ch = c.members.find(x => x.meta.id === l.agent) || null;
+      const secs = Math.min(5.5, Math.max(2.2, 1.6 + l.text.length * 0.045));
+      for (const m of c.members) m.speaking = false;
+      if (ch) { ch.speaking = true; sayText(ch, l.text, secs); }
+      c.nextAt = clockT + secs + 0.25;
+    }
+    if ((c.phase === 'agree' || c.phase === 'end') && clockT >= c.endAt) finishConvo(c);
+  }
+
   function goHome(ch) {
     walk(ch, ch.seat, ch.standing ? 'stand' : 'sit', () => { ch.g.rotation.y = ch.homeRot; });
   }
@@ -1324,8 +1806,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       cur.az = goal.az; cur.el = goal.el; cur.zoom = goal.zoom; cur.t.copy(goal.t);
     } else ease(dt);
     placeCam(cur);
-    if (!reduced) skyTex.offset.x = (t * 0.006) % 1;
-    tickClock(t);
+    if (!reduced) { skyTex.offset.x = (t * 0.006) % 1; nightSkyTex.offset.x = (t * 0.002) % 1; }
+    const vnow = updateTimeOfDay(dt);
+    tickClock(t, vnow);
+    updateWalls(dt);
+    updateBell(dt);
+    updateConvo();
     // dust motes drift in the light
     if (dust) {
       const pos = dust.geometry.attributes.position, base = dust.userData.base, seeds = dust.userData.seeds;
@@ -1336,9 +1822,9 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
         pos.array[i * 3 + 2] = base[i * 3 + 2] + Math.cos(t * 0.13 + s) * 0.25;
       }
       pos.needsUpdate = true;
-      dust.material.opacity = 0.55 + Math.sin(t * 0.5) * 0.15;
+      dust.material.opacity = (0.55 + Math.sin(t * 0.5) * 0.15) * Math.max(0, 1 - todState.night * 1.3) * wallVis.l;
     }
-    shafts.forEach((m, i) => { m.material.opacity = reduced ? 0.2 : 0.17 + Math.sin(t * 0.4 + i) * 0.04; });
+    shafts.forEach((m, i) => { m.material.opacity = (reduced ? 0.2 : 0.17 + Math.sin(t * 0.4 + i) * 0.04) * (todState.shaft ?? 1) * wallVis.l; m.visible = m.material.opacity > 0.005; });
     // steam from the espresso machine
     for (const s of steam) {
       const ph = ((t * 0.35 + s.userData.phase) % 1);
@@ -1347,7 +1833,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       s.material.opacity = reduced ? 0 : Math.sin(ph * Math.PI) * 0.35;
     }
     machineLed.material.color.setHSL(0.36, 0.9, 0.55 + Math.sin(t * 3) * 0.12);
-    lampGlow.material.opacity = 0.5 + Math.sin(t * 0.8) * 0.04;
+    lampGlow.material.opacity = 0.5 + (todState.lamps || 0) * 0.4 + Math.sin(t * 0.8) * 0.04;
     // characters + tags
     const tagH = Math.min(0.78, (mobile ? 30 : 34) / Math.max(200, canvas.clientHeight) * cur.zoom);
     for (const ch of agents.values()) {
@@ -1412,7 +1898,27 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   const api = {
     fps: 0,
     spots: { coffee: coffeeSpot, meet: MEET },
-    addAgent(meta) { const ch = addCharacter(meta); ch.showStatus = !!meta.live; drawTag(ch); return ch; },
+    addAgent(meta) { const ch = addCharacter(meta); ch.showStatus = !!meta.live; drawTag(ch); if (todState.pj) setPajamas(ch, true); return ch; },
+    /* ---- v6 ---- */
+    /** Walk to the bell and ring it twice. label shows above the bell ("PR #7 · ..."). Queued if the bell is busy. */
+    ringBell(id, label = '') {
+      if (bell.queue.length >= 4) return false;
+      bell.queue.push({ id: id || null, label: String(label || '🔔') });
+      return true;
+    },
+    bellBusy() { return !!bell.busy || bell.queue.length > 0; },
+    bellRings() { return bell.rings; },
+    /** {participants:[ids], lines:[{agent, text}], agreed} — they walk together and talk in speech bubbles. */
+    converse(spec) { return converse(spec || {}); },
+    say(id, text, seconds = 3.5) { const ch = agents.get(id); if (!ch || !ch.g.visible) return false; sayText(ch, String(text), seconds); return true; },
+    talking() { return convo.cur ? convo.cur.members.map(c => c.meta.id) : []; },
+    micro(id, type) { const ch = agents.get(id); if (!ch || ch.action !== 'sit') return false; startMicro(ch, type); return true; },
+    /** 'HH:MM' fixes the room's clock, 'cycle' or 'cycle:SECONDS' runs a whole day, null/'real' = the viewer's clock */
+    setTime(v) { return setTime(v); },
+    timeInfo() { const d = virtualNow(); return { h: +(d.getHours() + d.getMinutes() / 60).toFixed(3), hhmm: d.toTimeString().slice(0, 5), mode: timeCtl.mode, night: +todState.night.toFixed(2), phase: todState.phase, pajamas: !!todState.pj }; },
+    setInset(px) { inset.goal = Math.max(0, Number(px) || 0); computeHome(); if (atHome) { goal.zoom = home.zoom; goal.t.copy(home.t); goal.el = home.el; } clampGoal(); },
+    rotateBy(rad) { goal.az += rad; atHome = false; lastInteract = clockT; },
+    walls() { return { back: +wallVis.b.toFixed(2), left: +wallVis.l.toFixed(2) }; },
     hasAgent(id) { return agents.has(id); },
     setVisible(id, visible) {
       const ch = agents.get(id); if (!ch) return;
@@ -1496,7 +2002,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     focusBoard() { atHome = false; goal.az = BASE_AZ + 0.32; goal.el = 0.5; goal.t.set(BOARD.cx, BOARD.cy, BOARD.z + 1); goal.zoom = Math.max(LIM.zMin, BOARD.h * 1.5, (BOARD.w + 0.5) / aspect()); clampGoal(); },
     focusShelf() { atHome = false; goal.az = BASE_AZ + 0.3; goal.el = 0.5; goal.t.set(shelfCx, 1.4, SHELF.z + 1); goal.zoom = Math.max(LIM.zMin, shelfTop + 0.9, (shelfW + 0.5) / aspect()); clampGoal(); },
     zoomBy(f) { const r = canvas.getBoundingClientRect(); zoomAt(f, r.left + r.width / 2, r.top + r.height / 2); },
-    resetCam() { atHome = true; goal.az = BASE_AZ; goal.el = home.el; goal.zoom = home.zoom; goal.t.copy(home.t); for (const ch of agents.values()) ch.focused = false; },
+    resetCam() { atHome = true; goal.az = BASE_AZ + Math.round((cur.az - BASE_AZ) / (Math.PI * 2)) * Math.PI * 2; goal.el = home.el; goal.zoom = home.zoom; goal.t.copy(home.t); for (const ch of agents.values()) ch.focused = false; },
     updateScreen: drawWallScreen,
     updateBoard: drawBoard,
     updateShelves: buildShelves,
@@ -1506,6 +2012,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       let v;
       if (what === 'board') v = new THREE.Vector3(BOARD.cx + BOARD.w * 0.3, BOARD.cy + BOARD.h * 0.36, BOARD.z);
       else if (what === 'shelf') v = new THREE.Vector3(shelfCx, shelfTop * 0.55, SHELF.z + 0.2);
+      else if (what === 'bell') v = new THREE.Vector3(BELL.x, BELL.top - 0.3, BELL.z);
       else { const ch = agents.get(what); if (!ch) return null; v = ch.g.position.clone().add(new THREE.Vector3(0, 1.0, 0)); }
       v.project(cam);
       const r = canvas.getBoundingClientRect();

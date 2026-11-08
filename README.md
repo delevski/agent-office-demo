@@ -22,6 +22,30 @@ Running several AI agents (Claude, GPT, Hermes and others) leaves you reading lo
 
 ## Architecture
 
+## v6: a living room
+
+- **Full-screen room + drawer.** The room fills the screen; the side panel is a drawer (‹ / ›) and leaves a narrow strip with the key numbers (connected, tasks today, events, bell rings, room clock) and one dot per agent when closed. Its state is remembered.
+- **Real time of day.** The wall clock, the TV corner, the light, the windows and the sky behind the room follow the viewer's clock: dawn, day, dusk and night (stars, a night skyline, desk lamps on, agents in pajamas and nightcaps). Debug: `?time=22:00` fixes the room's clock, `?time=cycle:60` runs a whole day in 60 s (also in ⚡ → "שעה בחדר").
+- **The bell.** On `task.done` (not failed) and on the new `pr.opened`, the agent gets up, walks to the bell in the front-right corner and rings it twice. The sound is synthesized with WebAudio (`sound.js`, no audio files); there is an in-app toast, and a browser notification when the page is in the background (🔔 in the top bar asks for permission; 🔊 mutes). Browsers allow sound only after the first tap on the page.
+- **Conversations.** `chat.exchange` (e.g. a Slack thread where agents agreed on something) makes the participants walk together and talk in speech bubbles, ending with 🤝 when `agreed` is true. Demo mode plays scripted conversations; live mode, with "חיים במשרד" on, only adds rare emoji small talk (no invented content).
+- **Idle life.** Stretching, sipping coffee, looking around, leaning back, yawning at night.
+- **Actions (⚡).** Ring the bell, coffee break, stretch, celebrate, a short chat, team meeting, everyone back to desks, ambient life on/off, room time. All local animation: nothing is sent to an agent.
+- **Camera.** Drag orbits all the way round the vertical axis (the wall between you and the room fades out), ⟲ / ⟳ and the arrow keys rotate, wheel / pinch zooms, "איפוס מצלמה" returns home.
+
+```bash
+# PR opened → the bell rings (pr can be a number or the PR URL)
+curl -X POST "$OFFICE/api/ingest" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"pr.opened","pr":"https://github.com/owner/repo/pull/7","title":"Office v6"}'
+# a Slack discussion where two agents agreed
+curl -X POST "$OFFICE/api/ingest" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"chat.exchange","participants":["tab","hermes"],"topic":"form bug","agreed":true,"source":"slack",
+       "lines":[{"agent":"tab","text":"ראית את הבאג בטופס?"},{"agent":"hermes","text":"כן, כותב בדיקה"}]}'
+```
+
+`chat.exchange`: 2–4 participants (taken from `participants` and from the speakers of `lines`), up to 6 lines of up to 90 characters each, `agreed` true/false, optional `topic`, `source`, `link`. Aliases: `chat`, `conversation`, `agreement`, `slack.exchange`; `pr.open`, `pr.created`, `pull_request.opened`.
+
+Reliability, alerts, reviews, the replay and `/api/tasks` work as before.
+
 ```mermaid
 flowchart LR
   A[Agents<br/>Claude · GPT · Hermes] -- "POST /api/ingest<br/>Bearer token per agent" --> W[Cloudflare Worker<br/>worker.js + server/]
@@ -31,7 +55,7 @@ flowchart LR
   O[Owner login] -- session cookie --> W
 ```
 
-**Event kinds** (`POST /api/ingest`): `task.start`, `task.done`, `task.failed`, `task.queued`, `status`, `usage`, `config`, `heartbeat` (full snapshot), plus validated `review`, `pr.merged`, `deploy` and `handoff`. Unknown kinds are kept as free-form log events.
+**Event kinds** (`POST /api/ingest`): `task.start`, `task.done`, `task.failed`, `task.queued`, `status`, `usage`, `config`, `heartbeat` (full snapshot), plus validated `review`, `pr.merged`, `deploy`, `handoff`, `pr.opened` and `chat.exchange`. Unknown kinds are kept as free-form log events. A `task.start` / `task.queued` may carry `from_agent` (who passed the work on).
 
 Key design decisions:
 
