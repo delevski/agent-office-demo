@@ -608,7 +608,7 @@ function livePanelHtml(a) {
   const tasksHtml = tasks.length
     ? `<ul class="ap-tasks">${tasks.slice(0, 8).map(t => `
         <li title="${TASK_HE[t.status] || ''}"><span class="t-ico" aria-label="${TASK_HE[t.status] || ''}">${TASK_ICON[t.status] || '•'}</span>
-          <span class="grow">${safeUrl(t.link) ? `<a href="${safeUrl(t.link)}" target="_blank" rel="noopener">${esc(t.title || t.id)}</a>` : esc(t.title || t.id)}${chainHtml(t)}</span>
+          <span class="grow">${safeUrl(t.link) ? `<a href="${safeUrl(t.link)}" target="_blank" rel="noopener">${esc(t.title || t.id)}</a>` : esc(t.title || t.id)}${chainHtml(t)}${t.note ? `<div class="muted">${esc(t.note)}</div>` : ''}</span>
           <span class="muted">${when(t.ended || t.since)}</span></li>`).join('')}</ul>`
     : `<div class="ap-empty-line">עוד אין משימות</div>`;
   const c = v.config;

@@ -158,3 +158,21 @@ test('heartbeat recent[] understands queued results', () => {
   assert.equal(a.tasks.find(x => x.id === 'q1').ended, undefined);
   assert.equal(a.tasks.find(x => x.id === 'd1').status, 'done');
 });
+
+test('task.done note is kept on the task so the board card shows what was done', () => {
+  const { a } = run([
+    { agent: 'hermes', kind: 'task.start', task: { id: 'r1', title: 'סבב מענה לבקשה' } },
+    { agent: 'hermes', kind: 'task.done', task: { id: 'r1' }, note: 'ענה לאורי בוואטסאפ: מחר 10:00 נקבעה פגישה עם רועי' },
+  ]);
+  assert.equal(a.tasks[0].status, 'done');
+  assert.equal(a.tasks[0].note, 'ענה לאורי בוואטסאפ: מחר 10:00 נקבעה פגישה עם רועי');
+});
+
+test('task.done without note keeps the note reported at start', () => {
+  const { a } = run([
+    { agent: 'hermes', kind: 'task.start', task: { id: 'b1', title: 'מענה לאורי' }, note: 'בודק את לוח השנה' },
+    { agent: 'hermes', kind: 'task.done', task: { id: 'b1' } },
+  ]);
+  assert.equal(a.tasks[0].status, 'done');
+  assert.equal(a.tasks[0].note, 'בודק את לוח השנה');
+});
