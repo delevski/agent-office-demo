@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { SLOTS, SLOT_ORDER, assignSlots, layoutFor, FRAME } from '../concept.js';
+import { SLOTS, SLOT_ORDER, SEAT_CHARS, SEAT_BOX, SPOTS, assignSlots, layoutFor, planPath, FRAME } from '../concept.js';
 
 const read = f => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const roster = JSON.parse(read('roster.json'));
@@ -58,7 +58,7 @@ test('layout: desktop is the 1600x1000 concept frame scaled; phones fill the wid
 });
 
 test('the concept chrome: room picture, panel open by default, dock, tools, pills layer', () => {
-  assert.ok(existsSync(new URL('../assets/office-room.jpg', import.meta.url)));
+  assert.ok(existsSync(new URL('../assets/office-room-day.jpg', import.meta.url)) && existsSync(new URL('../assets/office-room-night.jpg', import.meta.url)));
   for (const id of ['cv', 'cv-pills', 'cpanel', 'cp-cols', 'cp-review', 'cp-chat', 'cp-add', 'cp-close', 'btn-view3d', 'btn-agents']) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(html, /concept\.css/);
   assert.match(main, /cpOpen\(isDesktop\(\) && LS\.get\('cpanel', '1'\) !== '0'\)/, 'the panel opens by default on desktop');
@@ -76,4 +76,20 @@ test('the board, review row and chat in the panel are rendered from the same dat
   assert.match(main, /function renderCPanel\(\)[\s\S]*boardData\(\)/);
   assert.match(main, /reviews\[reviews\.length - 1\]/);
   assert.match(main, /o\.converse = spec =>/);
+});
+
+test('motion: every seat has its sprite set, plates exist, and paths between seats and spots stay on the floor', () => {
+  for (const c of SEAT_CHARS) for (const nm of ['sit', 'stand', 'walk1', 'walk2', 'pj', 'sleep']) assert.ok(existsSync(new URL(`../assets/sprites/${c}-${nm}.webp`, import.meta.url)), `${c}-${nm}`);
+  assert.equal(SEAT_BOX.length, 6);
+  for (const b of SEAT_BOX) { assert.ok(b.fx > 0 && b.fx < 1 && b.fy > 0 && b.fy < 1); }
+  for (const b of SEAT_BOX) for (const to of [SPOTS.talk[0], SPOTS.bell, SPOTS.coffee[0], SPOTS.meet]) {
+    const p = planPath({ x: b.fx, y: b.fy }, to);
+    assert.ok(p.length >= 1 && p.length < 40);
+    const end = p[p.length - 1]; assert.ok(Math.abs(end.x - to.x) < 1e-9 && Math.abs(end.y - to.y) < 1e-9);
+  }
+});
+
+test('motion: the concept view is driven by the same calls as the 3D office (converse, bell, coffee, gather, night)', () => {
+  for (const call of ['o.converse = spec =>', 'o.ringBell = (id, label) =>', 'o.coffeeBreak =', 'o.gatherAll =', 'o.disperseAll =', 'cv.setNight(info.night)']) assert.ok(main.includes(call), call);
+  assert.match(main, /setRenderPaused\(/);
 });

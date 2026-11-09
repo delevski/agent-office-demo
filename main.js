@@ -83,12 +83,14 @@ const isDesktop = () => matchMedia('(min-width:901px)').matches;
 function castNow() { return mode === 'live' ? LIVE : AGENTS; }
 function syncCast() {
   if (!cv) return;
+  { const card = document.querySelector('.scene-card'); const n = parseFloat(card && card.style.getPropertyValue('--night')); if (!Number.isNaN(n)) cv.setNight(n); }
   cv.setCast(castNow());
   castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
   renderCPanel();
 }
 function setView(room) {
   document.body.classList.toggle('cvx', room);
+  office?.setRenderPaused(room);
   $('#btn-view3d')?.setAttribute('aria-pressed', room ? 'false' : 'true');
   LS.set(CV_KEY, room ? 'room' : '3d');
   if (room) { drawerOpen = false; applyDrawer(false); } else { drawerOpen = isDesktop(); applyDrawer(false); }
@@ -136,26 +138,23 @@ function renderCPanel() {
   const lines = chatLog.slice(-3);
   $('#cp-chat').innerHTML = lines.length ? lines.map(l => `<div class="cm">${chip(l.a)}<span class="cb">${esc(l.text)}</span></div>`).join('') : '<div class="muted">כשסוכנים ידברו, השיחה תופיע כאן</div>';
 }
-let cvQueue = Promise.resolve();
-function cvSpeak(spec) {
-  if (!cv || !spec) return;
-  const lines = (spec.lines || []).filter(l => l && l.text);
-  let t = 1100;
-  lines.forEach(l => {
-    const a = castNow().find(x => x.id === l.agent); if (!a) return;
-    setTimeout(() => { cv.say(a.id, l.text, 3800); chatLog.push({ a, text: l.text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel(); }, t);
-    t += 3000;
-  });
-}
 function initConcept() {
-  cv = createConcept($('#cv'), { esc });
-  // keep the live scene's logic in charge; mirror it onto the picture
-  const o = office, _converse = o.converse.bind(o), _setStatus = o.setStatus.bind(o), _ring = o.ringBell.bind(o), _celebrate = o.celebrate.bind(o);
-  o.converse = spec => { const ok = _converse(spec); if (ok) cvSpeak(spec); return ok; };
-  o.setStatus = (id, st) => { cv.setStatus(id, st); return _setStatus(id, st); };
-  o.ringBell = (id, label) => { cv.ring(id); const a = castNow().find(x => x.id === id); if (a && label) cv.say(id, label, 3200); return _ring(id, label); };
-  o.celebrate = id => { cv.ring(id); return _celebrate(id); };
+  cv = window.__cv = createConcept($('#cv'), { esc, onLine: (id, text) => {
+    const a = castNow().find(x => x.id === id); if (!a) return;
+    chatLog.push({ a, text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel();
+  } });
+  // keep the live scene's logic in charge; mirror it onto the picture: the people walk, talk, ring the gong and sleep
+  const o = office, orig = {};
+  for (const k of ['converse', 'setStatus', 'ringBell', 'celebrate', 'coffeeBreak', 'gatherAll', 'disperseAll', 'micro']) orig[k] = o[k]?.bind(o);
+  o.converse = spec => { const ok = orig.converse(spec); cv.converse(spec); return ok; };
+  o.setStatus = (id, st) => { cv.setStatus(id, st); return orig.setStatus(id, st); };
+  o.ringBell = (id, label) => { cv.bell(id, label); return orig.ringBell(id, label); };
+  o.celebrate = id => { cv.hop(id); cv.ring(id); return orig.celebrate(id); };
+  o.coffeeBreak = (id, secs) => { const ok = orig.coffeeBreak(id, secs); if (ok) cv.coffee(id, secs); return ok; };
+  o.gatherAll = () => { cv.gather(true); return orig.gatherAll(); };
+  o.disperseAll = () => { cv.gather(false); return orig.disperseAll(); };
   document.body.classList.toggle('cvx', wantCV());
+  office.setRenderPaused(wantCV());
   $('#btn-view3d')?.setAttribute('aria-pressed', wantCV() ? 'false' : 'true');
   cpOpen(isDesktop() && LS.get('cpanel', '1') !== '0');
   if (wantCV()) { drawerOpen = false; applyDrawer(false); }
@@ -1692,6 +1691,7 @@ function onTimeOfDay(info) {
   if (card && key !== onTimeOfDay.key) {
     onTimeOfDay.key = key;
     card.style.setProperty('--night', info.night.toFixed(3));
+    if (cv) cv.setNight(info.night);
     card.style.setProperty('--dawn', (info.phase === 'dawn' || info.phase === 'dusk' ? 1 : 0).toString());
   }
   if (info.phase !== lastTod) { lastTod = info.phase; document.body.dataset.tod = info.phase; renderStrip(); }

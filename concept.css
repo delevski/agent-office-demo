@@ -8,9 +8,13 @@
 body.cvx .cv-only{display:inline-flex}
 .cv{display:none}
 body.cvx .cv{display:block;position:absolute;inset:0;z-index:1;overflow:hidden}
-body.cvx .cv .cv-bgb{position:absolute;inset:-40px;background:#eef1f4 url(./assets/office-room.jpg) center/cover no-repeat;filter:blur(40px) saturate(1.1) brightness(calc(1 - var(--night) * .45));transform:scale(1.1)}
-body.cvx .cv .cv-img{position:absolute;background:url(./assets/office-room.jpg) 0 0/100% 100% no-repeat;filter:brightness(calc(1 - var(--night) * .42)) saturate(calc(1 - var(--night) * .25));-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);transition:filter 1.2s}
-body.cvx .cv .cv-night{position:absolute;inset:0;background:linear-gradient(180deg,#1c2a6b 0%,#0d1233 100%);mix-blend-mode:multiply;opacity:calc(var(--night) * .5);pointer-events:none;transition:opacity 1.2s}
+body.cvx .cv .cv-bgb{position:absolute;inset:-40px;background:#eef1f4 url(./assets/office-room-day.jpg) center/cover no-repeat;filter:blur(40px) saturate(1.1);transform:scale(1.1)}
+body.cvx .cv .cv-img{position:absolute;background:url(./assets/office-room-day.jpg) 0 0/100% 100% no-repeat;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);transition:filter 1.2s}
+body.cvx .cv .cv-img.cv-img-night{background-image:url(./assets/office-room-night.jpg);opacity:var(--night);transition:opacity 1.2s}
+body.cvx .cv-world{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+body.cvx .cv-actor{position:absolute;pointer-events:none;user-select:none;-webkit-user-drag:none;max-width:none;will-change:left,top;filter:drop-shadow(0 6px 8px rgba(0,0,0,.18))}
+body.cvx .cv.bell-shake{animation:cvshake .4s linear 3}
+@keyframes cvshake{25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
 body.cvx .cv-pills{position:absolute;inset:0;pointer-events:none}
 body.cvx #scene{opacity:0;pointer-events:none}
 body.cvx .scene-sky,body.cvx .scene-card::after{display:none}

@@ -1870,11 +1870,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       if (s.userData.life <= 0) s.visible = false;
     }
     hooks.onFrame?.(dt, t);
-    renderer.render(scene, cam);
+    if (!renderPaused) renderer.render(scene, cam);
     frames++;
   }
 
   const clock = new THREE.Clock();
+  let renderPaused = false; // the concept view hides the canvas: keep the simulation running, skip the draw calls
   function loop() {
     if (!running) return;
     requestAnimationFrame(loop);
@@ -2004,6 +2005,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     focusShelf() { atHome = false; goal.az = BASE_AZ + 0.3; goal.el = 0.5; goal.t.set(shelfCx, 1.4, SHELF.z + 1); goal.zoom = Math.max(LIM.zMin, shelfTop + 0.9, (shelfW + 0.5) / aspect()); clampGoal(); },
     zoomBy(f) { const r = canvas.getBoundingClientRect(); zoomAt(f, r.left + r.width / 2, r.top + r.height / 2); },
     resetCam() { atHome = true; goal.az = BASE_AZ + Math.round((cur.az - BASE_AZ) / (Math.PI * 2)) * Math.PI * 2; goal.el = home.el; goal.zoom = home.zoom; goal.t.copy(home.t); for (const ch of agents.values()) ch.focused = false; },
+    setRenderPaused(v) { renderPaused = !!v; },
     updateScreen: drawWallScreen,
     updateBoard: drawBoard,
     updateShelves: buildShelves,
