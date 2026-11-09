@@ -25,6 +25,7 @@ import {
 
 export { EventHub } from './server/hub.js';
 import { parseBoardTask } from './server/board.js';
+import { notifyInstinct } from './server/notify.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -77,7 +78,7 @@ async function ingest(request, env, forcedAgent = null) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -128,7 +129,13 @@ export default {
       const parsed = parseBoardTask(body, tokenAgents(env));
       if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid task', details: parsed.errors }, 400);
       const res = await hub(env).fetch('https://hub/board/create', { method: 'POST', body: JSON.stringify(parsed) });
-      return privateJson(await res.json(), res.status);
+      const out = await res.json();
+      // Instant wake for Instinct: only for newly created owner-session tasks (never for duplicates). Poll stays as backup.
+      if (res.ok && !out.duplicate && Array.isArray(out.tasks)) {
+        const job = notifyInstinct(env, out.tasks, hub(env));
+        if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
+      }
+      return privateJson(out, res.status);
     }
     if (path === '/api/tasks' && request.method === 'GET') {
       if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
