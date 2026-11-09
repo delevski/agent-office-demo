@@ -1,6 +1,7 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=24';
+import { createOffice } from './office.js?v=25';
+import { createConcept } from './concept.js?v=2';
 import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
@@ -19,12 +20,12 @@ if (SHOWCASE) {
 
 /* ---------------- roster: data-driven, fetched from roster.json ---------------- */
 const FALLBACK_ROSTER = { agents: [
-  { id:'noa', name:'נועה', role:'סוכנת לידים', handle:'noa', color:'#7aa2f7', skin:'#f2c9a4', hair:'#5a3d28', longHair:true, kinds:[['lead.new','ליד חדש נכנס','+1'],['lead.qualified','ליד סומן כמתאים','+1']] },
-  { id:'maya', name:'מאיה', role:'סוכנת מכירות', handle:'maya', color:'#ef87a8', skin:'#e8b48c', hair:'#2c2320', longHair:true, kinds:[['quote.sent','הצעת מחיר נשלחה','#'],['deal.won','עסקה נסגרה!','₪']] },
-  { id:'itay', name:'איתי', role:'סוכן שירות', handle:'itay', color:'#57c98a', skin:'#f2c9a4', hair:'#3a2a1c', longHair:false, kinds:[['call.done','שיחת שירות הסתיימה','min'],['ticket.closed','פנייה נסגרה','#']] },
-  { id:'dani', name:'דני', role:'סוכן גבייה', handle:'dani', color:'#f2a65a', skin:'#d9a077', hair:'#1f1a16', longHair:false, kinds:[['payment.received','תשלום התקבל','₪'],['invoice.sent','חשבונית הופקה','#']] },
-  { id:'shira', name:'שירה', role:'סוכנת תוכן', handle:'shira', color:'#b085e8', skin:'#f2c9a4', hair:'#8a5a2b', longHair:true, kinds:[['post.draft','טיוטת פוסט מוכנה','+1'],['post.published','פוסט פורסם','+1']] },
-  { id:'omer', name:'עומר', role:'סוכן פרסום', handle:'omer', color:'#5ecfd6', skin:'#c98e63', hair:'#24201c', longHair:false, kinds:[['ad.report','דוח קמפיין נבנה','+1'],['campaign.tuned','קמפיין כוונן','CTR']] },
+  {"id": "hermessi", "name": "hermessi", "role": "סוכן שחרורים", "handle": "hermessi", "color": "#8b7cf6", "skin": "#f2c9a4", "hair": "#5a3d28", "longHair": true, "kinds": [["release.ready", "גרסה מוכנה לשחרור", "#"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "h", "icon": "wing"}, "skills": ["ארוז גרסאות", "הערות שחרור", "ניהול גרסאות", "פריסה"], "demoTasks": ["ShortiGo release", "PR #7 נמזג"], "demoBoard": {"doing": {"title": "ShortiGo release", "ago": 12}, "todo": [], "done": [{"title": "PR #7 נמזג", "at": "10:42"}], "rank": 1}, "slot": 3},
+  {"id": "claudi", "name": "Claudi", "role": "סוכנת סקירת קוד", "handle": "claudi", "color": "#e07a4f", "skin": "#e8b48c", "hair": "#2c2320", "longHair": true, "kinds": [["review.done", "סקירת קוד הושלמה", "+1"], ["pr.approved", "PR אושר", "#"]], "emblem": {"mono": "C", "icon": "spark"}, "skills": ["סקירת קוד", "בדיקות", "ארכיטקטורה", "תיעוד"], "demoTasks": ["PR #8 review"], "demoBoard": {"doing": {"title": "PR #8 review", "ago": 4}, "todo": [], "done": [], "rank": 0}, "slot": 1},
+  {"id": "gepeta", "name": "Gepeta", "role": "סוכנת תוכן", "handle": "gepeta", "color": "#4fb986", "skin": "#f2c9a4", "hair": "#3a2a1c", "longHair": false, "kinds": [["doc.draft", "טיוטה מוכנה", "+1"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "G", "icon": "pen"}, "skills": ["הערות שחרור", "מסמכי מוצר", "ניוזלטר", "תרגום"], "demoTasks": ["ShortiGo release notes"], "demoBoard": {"doing": null, "todo": [{"title": "ShortiGo release notes", "when": "מחר"}], "done": [], "rank": 1}, "slot": 2},
+  {"id": "grocki", "name": "Grocki", "role": "סוכן QA", "handle": "grocki", "color": "#ef6f9c", "skin": "#d9a077", "hair": "#1f1a16", "longHair": false, "kinds": [["test.passed", "בדיקות עברו", "#"], ["bug.found", "נמצא באג", "#"]], "emblem": {"mono": "Gr", "icon": "magnet"}, "skills": ["בדיקות מובייל", "רגרסיה", "דוחות באגים", "תשלומים"], "demoTasks": ["בדיקת דף תשלום במובייל"], "demoBoard": {"doing": null, "todo": [{"title": "בדיקת דף תשלום במובייל", "when": "היום"}], "done": [], "rank": 0}, "slot": 4},
+  {"id": "gemino", "name": "Gemino", "role": "סוכן נתונים", "handle": "gemino", "color": "#4aa3ee", "skin": "#f2c9a4", "hair": "#8a5a2b", "longHair": true, "kinds": [["report.built", "דוח נבנה", "+1"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "Gm", "icon": "chat"}, "skills": ["דוחות", "ניתוח נתונים", "קמפיינים", "לוחות מחוונים"], "demoTasks": ["תיקון הפניה אחרי כניסה", "דוח קמפיין שבועי"], "demoBoard": {"doing": {"title": "תיקון הפניה אחרי כניסה", "ago": 25}, "todo": [], "done": [{"title": "דוח קמפיין שבועי", "at": "09:58"}], "rank": 2}, "slot": 0},
+  {"id": "deepsi", "name": "Deepsi", "role": "סוכנת מחקר", "handle": "deepsi", "color": "#2cc0c0", "skin": "#c98e63", "hair": "#24201c", "longHair": false, "kinds": [["research.done", "סיכום מחקר מוכן", "+1"], ["doc.updated", "מסמך עודכן", "#"]], "emblem": {"mono": "D", "icon": "coin"}, "skills": ["מחקר מתחרים", "סיכומים", "מדריך API", "מקורות"], "demoTasks": ["עדכון מדריך ה-API", "מחקר מתחרים · סיכום"], "demoBoard": {"doing": null, "todo": [{"title": "עדכון מדריך ה-API", "when": "יום ד׳"}], "done": [{"title": "מחקר מתחרים · סיכום", "at": "09:15"}], "rank": 2}, "slot": 5}
 ]};
 
 let AGENTS = [];          // demo characters (roster.json "agents")
@@ -73,6 +74,131 @@ async function loadRoster() {
   }
 }
 
+
+/* ---------------- concept view: the approved room picture + live pills, bubbles and the right-hand panel ---------------- */
+let cv = null, chatLog = [];
+const CV_KEY = 'view';
+const wantCV = () => (QS.get('view') || LS.get(CV_KEY, 'room')) !== '3d';
+const isDesktop = () => matchMedia('(min-width:901px)').matches;
+function castNow() { return mode === 'live' ? LIVE : AGENTS; }
+let cvMode = '';
+function demoChatSeed() {
+  return [['gemino', 'נתוני ShortiGo מוכנים, העליתי את הדוח לתיקייה המשותפת'], ['hermessi', 'מעולה, מתחיל לארוז את ה-release'], ['deepsi', 'סיכום המתחרים עודכן, יש שני דברים לשים לב אליהם']]
+    .map(([id, text]) => ({ a: AGENTS.find(x => x.id === id), text })).filter(l => l.a);
+}
+function syncCast() {
+  if (!cv) return;
+  if (cvMode !== mode) { if (cvMode) chatLog = mode === 'demo' ? demoChatSeed() : []; cvMode = mode; } // live mode never shows the demo conversation
+  { const card = document.querySelector('.scene-card'); const n = parseFloat(card && card.style.getPropertyValue('--night')); if (!Number.isNaN(n)) cv.setNight(n); }
+  cv.setCast(castNow());
+  castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
+  renderCPanel();
+}
+function setView(room) {
+  document.body.classList.toggle('cvx', room);
+  office?.setRenderPaused(room);
+  $('#btn-view3d')?.setAttribute('aria-pressed', room ? 'false' : 'true');
+  LS.set(CV_KEY, room ? 'room' : '3d');
+  if (room) { drawerOpen = false; applyDrawer(false); } else { drawerOpen = isDesktop(); applyDrawer(false); }
+  requestAnimationFrame(() => cv?.place());
+}
+function cpOpen(open) {
+  document.body.classList.toggle('cp-closed', !open);
+  $('#btn-board')?.classList.toggle('on', open);
+  LS.set('cpanel', open ? '1' : '0');
+}
+function relMin(ts) {
+  if (!ts) return 'עכשיו';
+  const mn = Math.max(0, Math.round((nowRef() - ts) / 60000));
+  if (mn < 1) return 'עכשיו';
+  return mn < 60 ? `לפני ${mn} דק׳` : when(ts);
+}
+function chip(a) { return `<span class="pchip"><i style="background:${esc(a.color)}"></i>${esc(a.name)}</span>`; }
+function renderCPanel() {
+  const root = $('#cpanel'); if (!root || !cv) return;
+  const bd = boardData();
+  const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
+  const total = bd.columns.todo.length + bd.columns.doing.length + bd.columns.done.length;
+  $('#cp-sub').textContent = `${castNow().length} סוכנים · ${total} משימות`;
+  $('#cp-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
+    const list = bd.columns[k].slice(0, k === 'done' ? 4 : 5);
+    const label = c => k === 'doing' ? relMin(c.since || c.ts) : (c.when || (k === 'done' ? when(c.ts) : ''));
+    return `<div class="kcol k-${k}"><div class="khead"><span class="kdot"></span>${names[k]}<span class="kcount">${bd.columns[k].length}</span></div>`
+      + (list.length ? list.map(c => `<div class="kcard"><div class="kt">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div><div class="km">${chip(c.agent)}<span class="when">${esc(label(c))}</span></div></div>`).join('')
+        : `<div class="kempty">${esc(bd.empty?.[k] || '—')}</div>`) + '</div>';
+  }).join('');
+  // last code review
+  let rv = '';
+  if (mode === 'live') {
+    const r = reviews[reviews.length - 1];
+    if (r) {
+      const who = agentMeta(r.reviewer_agent), [vt] = VERDICT_HE[r.verdict] || [''];
+      const n = (r.findings || []).length;
+      rv = `${chip(who)} סקר/ה את <b>PR #${esc(r.pr)}</b> · ${n} הערות<span class="badge-ok${r.verdict === 'approved' ? '' : ' chg'}">${ic(r.verdict === 'approved' ? 'circle-check' : 'refresh-cw', 'inline')}${esc(vt)}</span>`;
+    } else rv = '<span class="muted">עוד אין ביקורות קוד</span>';
+  } else {
+    const a = AGENTS.find(x => x.id === 'claudi') || AGENTS[0];
+    if (a) rv = `${chip(a)} סקרה את <b>PR #8</b> · 2 הערות, מאושר בכפוף לתיקון<span class="badge-ok">${ic('circle-check', 'inline')}אושר</span>`;
+  }
+  $('#cp-review').innerHTML = rv;
+  const lines = chatLog.slice(-3);
+  $('#cp-chat').innerHTML = lines.length ? lines.map(l => `<div class="cm">${chip(l.a)}<span class="cb">${esc(l.text)}</span></div>`).join('') : '<div class="muted">כשסוכנים ידברו, השיחה תופיע כאן</div>';
+}
+function initConcept() {
+  cv = window.__cv = createConcept($('#cv'), { esc, onLine: (id, text) => {
+    const a = castNow().find(x => x.id === id); if (!a) return;
+    chatLog.push({ a, text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel();
+  } });
+  // keep the live scene's logic in charge; mirror it onto the picture: the people walk, talk, ring the gong and sleep
+  const o = office, orig = {};
+  for (const k of ['converse', 'setStatus', 'ringBell', 'celebrate', 'coffeeBreak', 'gatherAll', 'disperseAll', 'micro']) orig[k] = o[k]?.bind(o);
+  o.converse = spec => { const ok = orig.converse(spec); cv.converse(spec); return ok; };
+  o.setStatus = (id, st) => { cv.setStatus(id, st); return orig.setStatus(id, st); };
+  o.ringBell = (id, label) => { cv.bell(id, label); return orig.ringBell(id, label); };
+  o.celebrate = id => { cv.hop(id); cv.ring(id); return orig.celebrate(id); };
+  o.coffeeBreak = (id, secs) => { const ok = orig.coffeeBreak(id, secs); if (ok) cv.coffee(id, secs); return ok; };
+  o.gatherAll = () => { cv.gather(true); return orig.gatherAll(); };
+  o.disperseAll = () => { cv.gather(false); return orig.disperseAll(); };
+  document.body.classList.toggle('cvx', wantCV());
+  office.setRenderPaused(wantCV());
+  $('#btn-view3d')?.setAttribute('aria-pressed', wantCV() ? 'false' : 'true');
+  cpOpen(isDesktop() && LS.get('cpanel', '1') !== '0');
+  if (wantCV()) { drawerOpen = false; applyDrawer(false); }
+  syncCast();
+  // the first screen is a believable moment in the day (demo only)
+  if (mode === 'demo' && !QS.get('quiet')) {
+    const seed = [['gemino', 'PR #8 מוכן לסקירה, מי פנוי?', 600], ['claudi', 'אני על זה, שתי דקות', 1700]];
+    seed.forEach(([id, text, at]) => setTimeout(() => { if (mode === 'demo') cv.say(id, text, 14000); }, at));
+    chatLog = demoChatSeed();
+    renderCPanel();
+  }
+  setInterval(renderCPanel, 30000);
+  // controls
+  $('#cp-close').addEventListener('click', () => cpOpen(false));
+  $('#cp-add').addEventListener('click', () => { if (mode === 'live') $('#btn-assign')?.click(); else { openAssignDemo(); } });
+  $('#btn-view3d').addEventListener('click', () => setView(!document.body.classList.contains('cvx')));
+  $('#btn-agents').addEventListener('click', () => { drawerOpen = !drawerOpen; LS.set('drawer', drawerOpen ? '1' : '0'); applyDrawer(); });
+  // zoom / reset act on the picture while it is the scene (captured before the 3D handlers)
+  const cvOnly = fn => e => { if (!document.body.classList.contains('cvx')) return; e.stopImmediatePropagation(); e.preventDefault(); fn(e); };
+  $('#btn-zoomin').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() * 1.25)), true);
+  $('#btn-zoomout').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() / 1.25)), true);
+  $('#btn-resetcam').addEventListener('click', cvOnly(() => { cv.setPan(0); cv.setZoom(1); }), true);
+  $('#btn-rotl')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() + 0.06)), true);
+  $('#btn-rotr')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() - 0.06)), true);
+  $('#btn-board').addEventListener('click', e => {
+    if (!document.body.classList.contains('cvx') || !isDesktop()) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    cpOpen(document.body.classList.contains('cp-closed'));
+  }, true);
+  const demoGate = id => $(id)?.addEventListener('click', e => {
+    if (mode === 'live' || !document.body.classList.contains('cvx')) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    toast('זמין במצב חי אחרי כניסה');
+  }, true);
+  demoGate('#btn-replay');
+}
+function openAssignDemo() { toast('משימות חדשות נשלחות במצב חי, אחרי כניסה'); }
+
 async function boot() {
   $('#boot-error').classList.add('hidden');
   try {
@@ -94,9 +220,11 @@ async function boot() {
       onTimeOfDay: onTimeOfDay,
     }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12, time: QS.get('time') || '' });
     window.__office = office;
+    initConcept();
     applyDrawer(false);
     if (!SHOWCASE) (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
     initDemoBoard();
+    syncCast();
     bootSet(85, 'בודק כניסה…');
     if (!SHOWCASE) await checkAuth();
     bootSet(100, 'מוכן!');
@@ -113,10 +241,13 @@ async function boot() {
 $('#boot-retry').addEventListener('click', boot);
 
 /* ---------------- busy wrapper + toasts ---------------- */
-function toast(msg, { err = false, retry = null } = {}) {
+/** Lucide icon from the inline sprite in index.html (thin outline, currentColor). */
+const ic = (name, cls = '') => `<svg class="ico${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+function toast(msg, { err = false, retry = null, icon = '' } = {}) {
   if (SHOWCASE) return;
   const el = document.createElement('div');
   el.className = 'toast' + (err ? ' err' : '');
+  if (icon || err) el.insertAdjacentHTML('beforeend', ic(icon || 'triangle-alert', 'toast-ico'));
   const span = document.createElement('span'); span.textContent = msg;
   el.appendChild(span);
   if (retry) {
@@ -160,6 +291,7 @@ function showCast() {
   LIVE.forEach(a => office.setVisible(a.id, mode === 'live'));
   document.body.classList.toggle('is-live', mode === 'live');
   $('#badge-mode').textContent = mode === 'live' ? 'חי' : 'דמו';
+  syncCast();
   $('#chart-sub').textContent = '30 הדקות האחרונות · ' + (mode === 'live' ? 'חי' : 'דמו');
   $('#log-sub').textContent = mode === 'live' ? 'אירועים אמיתיים שהסוכנים מדווחים' : 'טבלת דמו · כל שורה מזיזה דמות';
   $('#foot-demo').classList.toggle('hidden', mode === 'live');
@@ -191,7 +323,7 @@ function enterLiveMode({ quiet = false } = {}) {
   loadReviews(); loadChanges();
   connectLive();
   refreshWorld(true);
-  if (!quiet) toast('⚡ מצב חי — הסוכנים האמיתיים שלך');
+  if (!quiet) toast('מצב חי — הסוכנים האמיתיים שלך', { icon: 'zap' });
 }
 function enterDemoMode() {
   mode = 'demo';
@@ -210,10 +342,10 @@ $('#live-pill').addEventListener('click', () => {
 
 /* ---------------- KPIs ---------------- */
 const kpis = {
-  leads:   { label: 'לידים היום',   v: 0, money: false },
-  quotes:  { label: 'הצעות מחיר',   v: 0, money: false },
-  calls:   { label: 'שיחות שירות',  v: 0, money: false },
-  revenue: { label: 'הכנסות (דמו)', v: 0, money: true  },
+  leads:   { label: 'משימות שהושלמו', v: 0, money: false },
+  quotes:  { label: 'סקירות ובדיקות', v: 0, money: false },
+  calls:   { label: 'שחרורים ופריסות', v: 0, money: false },
+  revenue: { label: 'באגים שנמצאו', v: 0, money: false },
 };
 function liveKpis() {
   const views = LIVE.map(a => liveState.get(a.id)).filter(Boolean);
@@ -247,11 +379,10 @@ function bumpKpi(k, amount) {
   const el = $('#kpi-' + k); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
 }
 function bumpKpisForKind(kind, val) {
-  const n = parseInt(String(val).replace(/[^\d]/g, ''), 10) || 0;
-  if (/^lead/.test(kind)) bumpKpi('leads', 1);
-  else if (/^(quote|deal)/.test(kind)) { bumpKpi('quotes', 1); if (/deal/.test(kind) && n) bumpKpi('revenue', n); }
-  else if (/^(call|ticket|support)/.test(kind)) bumpKpi('calls', 1);
-  else if (/^(payment|invoice|charge)/.test(kind) && n) bumpKpi('revenue', n);
+  if (/^(task|doc|report|research|lead)/.test(kind)) bumpKpi('leads', 1);
+  else if (/^(review|pr|test|quote|deal)/.test(kind)) bumpKpi('quotes', 1);
+  else if (/^(release|deploy|call|ticket|support)/.test(kind)) bumpKpi('calls', 1);
+  else if (/^(bug|payment|invoice|charge)/.test(kind)) bumpKpi('revenue', 1);
 }
 renderKpis();
 
@@ -287,7 +418,7 @@ function panelHtml(a) {
     <div class="ap-status"><span class="dot" style="background:${a.color}"></span><span>${STATE_HE[st.state] || st.state}</span></div>
     <div class="ap-row"><span>פעולה אחרונה</span><span class="muted">${st.last}</span></div>
     <div class="ap-row"><span>אירועים היום</span><span class="mono">${st.events}</span></div>
-    <div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">🎯 מיקוד במשרד</button></div>`;
+    <div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">${ic('crosshair')}<span class="lbl">מיקוד במשרד</span></button></div>`;
 }
 function renderPanel(a) {
   const isMobile = window.innerWidth <= 900;
@@ -328,7 +459,7 @@ function renderPanelDefault() {
       const st = statOf(a.id);
       return `<div class="ag-item" data-id="${a.id}">
         <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
-        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ⚡' : ''}</span></div>
+        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ' + ic('zap', 'inline') : ''}</span></div>
         <div class="ag-last">${st.last}</div></div>
         <span class="mono muted">${st.events}</span>
       </div>`;
@@ -361,14 +492,14 @@ function drawChart() {
   const c = cv.getContext('2d');
   c.clearRect(0, 0, W, H);
   const max = Math.max(4, ...chartData);
-  c.strokeStyle = '#f5b301'; c.lineWidth = 2 * dpr; c.beginPath();
+  c.strokeStyle = '#007aff'; c.lineWidth = 2 * dpr; c.beginPath();
   chartData.forEach((v, i) => {
     const x = W - (i + 0.5) / chartData.length * W;
     const y = H - 6 * dpr - (v / max) * (H - 16 * dpr);
     i ? c.lineTo(x, y) : c.moveTo(x, y);
   });
   c.stroke();
-  c.fillStyle = '#f5b30122';
+  c.fillStyle = '#007aff33';
   chartData.forEach((v, i) => {
     const x = W - (i + 0.5) / chartData.length * W;
     const y = H - 6 * dpr - (v / max) * (H - 16 * dpr);
@@ -500,6 +631,7 @@ function addLiveCharacter(meta) {
   office.setStatus(meta.id, sceneStatus(liveState.get(meta.id)));
   office.setVisible(meta.id, mode === 'live');
   statOf(meta.id);
+  syncCast();
   return meta;
 }
 function createLiveAgent(handle, name) {
@@ -517,13 +649,13 @@ function createLiveAgent(handle, name) {
     live: true,
     kinds: [],
   });
-  if (mode === 'live') { renderPanelDefault(); toast(`⚡ סוכן חדש עלה למשרד: ${meta.name}`); }
+  if (mode === 'live') { renderPanelDefault(); toast(`סוכן חדש עלה למשרד: ${meta.name}`, { icon: 'zap' }); }
   return meta;
 }
 
 /* ---------------- live agent panel ---------------- */
 const STATUS_HE = { working: 'עובד עכשיו', idle: 'פנוי', blocked: 'תקוע · ממתין', offline: 'לא מחובר' };
-const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔', queued: '🗂️', handed: '↪️' };
+const TASK_ICON = { running: ic('loader-circle', 't-run'), done: ic('circle-check', 't-ok'), failed: ic('circle-x', 't-bad'), blocked: ic('octagon-alert', 't-warn'), queued: ic('inbox', 't-q'), handed: ic('corner-up-right', 't-q') };
 const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור', handed: 'הועבר' };
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -565,8 +697,8 @@ function liveListItem(a) {
     <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
     <div class="grow"><div style="font-weight:800;font-size:.88rem">${esc(a.name)} · <span class="muted">${esc(a.role)}</span></div>
     <div class="ag-last">${esc(line)}</div></div>
-    ${mt ? `<span class="mt-chip mt-${mt.level}" title="${esc(meterText(mt))}">💸 ${Math.round(mt.pct)}%</span>` : ''}
-    ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">⚠ ${esc(alertLabel(al))}</span>`
+    ${mt ? `<span class="mt-chip mt-${mt.level}" title="${esc(meterText(mt))}">${ic('wallet', 'inline')} ${Math.round(mt.pct)}%</span>` : ''}
+    ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">${ic('triangle-alert', 'inline')} ${esc(alertLabel(al))}</span>`
       : `<span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>`}
   </div>`;
 }
@@ -583,7 +715,7 @@ function livePanelHtml(a) {
       <div class="grow"><div class="ap-name">${esc(a.name)}</div><div class="ap-role">${esc(a.role)} · חי</div></div>
       <span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>
     </div>`;
-  const focus = `<div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">🎯 מיקוד במשרד</button></div>`;
+  const focus = `<div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">${ic('crosshair')}<span class="lbl">מיקוד במשרד</span></button></div>`;
   if (st === 'nodata') {
     return head + `<div class="ap-nodata"><b>אין נתונים עדיין.</b> ${esc(a.name)} עוד לא דיווח למשרד. ברגע שיגיע הדיווח הראשון יופיעו כאן העבודה הנוכחית, המשימות, השימוש והיכולות שלו.</div>` + focus;
   }
@@ -620,7 +752,7 @@ function livePanelHtml(a) {
        ${c.tools?.length ? `<div class="ap-sub">כלים <span class="muted">(${c.tools.length})</span></div><div class="chips chips-tools">${chips(c.tools)}</div>` : ''}`
     : `<div class="ap-empty-line">הסוכן עוד לא דיווח על היכולות שלו</div>`;
   const al = alertOf(v);
-  const alertHtml = al ? `<div class="al-card" role="alert"><b>⚠ ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}</b> <span>${esc(alertTitle(al))}</span></div>` : '';
+  const alertHtml = al ? `<div class="al-card" role="alert"><b>${ic('triangle-alert', 'inline')} ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}</b> <span>${esc(alertTitle(al))}</span></div>` : '';
   return head + alertHtml + `
     <div class="ap-seen muted">דיווח אחרון ${ago(v.lastSeen)}</div>
     <section class="ap-sec"><h4>עובד עכשיו על</h4>${currentHtml}</section>
@@ -649,7 +781,7 @@ function alertBannerHtml() {
   const list = liveAlerts();
   if (!list.length) return '';
   return `<div class="al-banner" role="alert">
-    <div class="al-title">⚠ ${list.length === 1 ? 'סוכן אחד דורש תשומת לב' : `${list.length} סוכנים דורשים תשומת לב`}</div>
+    <div class="al-title">${ic('triangle-alert', 'inline')} ${list.length === 1 ? 'סוכן אחד דורש תשומת לב' : `${list.length} סוכנים דורשים תשומת לב`}</div>
     ${list.map(({ a, al }) => `<div class="al-row" data-id="${esc(a.id)}" role="button" tabindex="0">
       <span class="ap-emblem sm">${emblemSVG(a, 26, { title: false })}</span>
       <span class="grow"><b>${esc(a.name)}</b> · ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}${al.task ? ` · <span class="muted">${esc(al.task)}</span>` : ''}</span>
@@ -659,7 +791,7 @@ function alertBannerHtml() {
 function applyAlert(a) {
   const al = mode === 'live' ? alertOf(liveState.get(a.id)) : null;
   office.setAlert(a.id, al ? { kind: al.kind, label: alertLabel(al) } : null);
-  if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`⚠ ${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
+  if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
   if (al) alertShown.set(a.id, al.kind); else alertShown.delete(a.id);
   return al;
 }
@@ -702,7 +834,7 @@ function historyHtml(days) {
 
 /* ---------------- 1. code reviews ---------------- */
 let reviews = [];
-const VERDICT_HE = { approved: ['אושר', '✅', 'v-ok'], changes_requested: ['נדרשו תיקונים', '🔁', 'v-chg'], commented: ['הערות', '💬', 'v-com'] };
+const VERDICT_HE = { approved: ['אושר', ic('circle-check', 'inline'), 'v-ok'], changes_requested: ['נדרשו תיקונים', ic('refresh-cw', 'inline'), 'v-chg'], commented: ['הערות', ic('message-circle', 'inline'), 'v-com'] };
 const SEV_HE = { critical: 'קריטי', high: 'גבוה', medium: 'בינוני', low: 'נמוך', nit: 'ניטפיק' };
 async function loadReviews() {
   if (!auth.loggedIn || mode !== 'live') return;
@@ -768,7 +900,7 @@ function agentReviewsHtml(a) {
       <div class="rv-mini-sum">${tr.points.length} PRs נבדקו · ממצאים: ${tr.first} → ${tr.last} ${changePct(tr)}</div>
       <div class="rv-mini-last muted">אחרון: PR #${esc(last.pr)} · ${esc(nameOf(last.reviewer_agent))} · ${VERDICT_HE[last.verdict]?.[0] || ''}</div>` : ''}
     ${given ? `<div class="rv-mini-last muted">ביקר ${given} PRs של אחרים</div>` : ''}
-    <button class="btn btn-ghost rv-open" id="ap-reviews" type="button">🔍 כל הביקורות</button></section>`;
+    <button class="btn btn-ghost rv-open" id="ap-reviews" type="button">${ic('search')}<span class="lbl">כל הביקורות</span></button></section>`;
 }
 let reviewFocus = null;
 function openReviews(focus = null) { reviewFocus = focus; renderReviewOverlay(); openOverlay('#review-ov'); }
@@ -813,7 +945,7 @@ function renderReviewOverlay() {
 
 /* ---------------- 4. what changed today ---------------- */
 let changesToday = [], changesDay = '', changesShown = null;
-const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅', 'pr.opened': '🔔' };
+const CHANGE_ICON = { 'pr.merged': ic('git-merge'), deploy: ic('rocket'), 'task.done': ic('circle-check'), 'pr.opened': ic('git-pull-request') };
 async function loadChanges() {
   if (!auth.loggedIn || mode !== 'live') return;
   try { const d = await apiGet('./api/changes'); if (d) { changesToday = d.changes || []; changesDay = d.day || ''; renderChanges(); } } catch (e) { console.warn(e); }
@@ -867,7 +999,7 @@ function meterVal(f, n) { return f === 'cost' ? fmtCost(n) : fmtNum(n); }
 function meterText(mt) { return `${METER_FIELD[mt.field]} היום ${meterVal(mt.field, mt.used)} מתוך ${meterVal(mt.field, mt.limit)} · ${Math.round(mt.pct)}%`; }
 function meterHtml(mt) {
   return `<div class="mt mt-${mt.level}">
-    <div class="mt-row"><span>${mt.level === 'over' ? '🔴 חרג מהתקציב' : mt.level === 'warn' ? '🟠 קרוב לתקציב' : 'תקציב יומי'}</span><span class="mt-num" dir="ltr">${esc(meterVal(mt.field, mt.used))} / ${esc(meterVal(mt.field, mt.limit))}</span></div>
+    <div class="mt-row"><span>${mt.level === 'over' ? `<i class="ldot ldot-over"></i> חרג מהתקציב` : mt.level === 'warn' ? `<i class="ldot ldot-warn"></i> קרוב לתקציב` : 'תקציב יומי'}</span><span class="mt-num" dir="ltr">${esc(meterVal(mt.field, mt.used))} / ${esc(meterVal(mt.field, mt.limit))}</span></div>
     <div class="mt-bar"><span style="width:${Math.min(100, mt.pct)}%"></span></div>
     <div class="muted">${esc(METER_FIELD[mt.field])} · ${Math.round(mt.pct)}% מהתקציב היומי</div></div>`;
 }
@@ -884,7 +1016,7 @@ function refreshMeetings() {
   const before = lastMeetSig ? JSON.parse(lastMeetSig) : [];
   lastMeetSig = sig;
   if (!replay.active && mode === 'live') for (const g of groups) if (!before.some(b => b.key === g.key && b.ids.length >= g.ids.length))
-    toast(`👥 ${g.ids.map(nameOf).join(', ')} עברו לחדר הישיבות · ${g.label}`);
+    toast(`${g.ids.map(nameOf).join(', ')} עברו לחדר הישיבות · ${g.label}`);
 }
 
 /* ---------------- B5. morning summary ---------------- */
@@ -1002,7 +1134,7 @@ function replayStep(now) {
 function replayPlay(on) {
   replay.playing = on && replay.t < replay.t1;
   cancelAnimationFrame(replay.raf);
-  $('#replay-play').textContent = replay.playing ? '⏸' : '▶';
+  $('#replay-play').innerHTML = ic(replay.playing ? 'pause' : 'play');
   $('#replay-play').setAttribute('aria-label', replay.playing ? 'השהיה' : 'ניגון');
   if (replay.playing) { replay.lastFrame = 0; replay.raf = requestAnimationFrame(replayStep); }
 }
@@ -1081,8 +1213,9 @@ async function checkAuth() {
 }
 function renderAuthButton() {
   const b = $('#btn-login');
-  b.innerHTML = auth.loggedIn ? '🔓 יציאה' : '🔒 כניסה';
+  b.innerHTML = auth.loggedIn ? `${ic('lock-open')}<span class="lbl">יציאה</span>` : `${ic('lock')}<span class="lbl">כניסה</span>`;
   b.setAttribute('aria-label', auth.loggedIn ? 'יציאה מהמשרד החי' : 'כניסה למשרד החי');
+  document.body.classList.toggle('authed', !!auth.loggedIn);
 }
 function openLogin() {
   $('#login-err').classList.add('hidden');
@@ -1135,7 +1268,7 @@ $('#btn-login').addEventListener('click', e => {
   withBusy(e.currentTarget, 'יוצא…', async () => {
     await fetch('./api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     onLoggedOut();
-    return '🔒 כניסה';
+    return `${ic('lock')}<span class="lbl">כניסה</span>`;
   });
 });
 
@@ -1196,7 +1329,7 @@ $('#btn-pause').addEventListener('click', e => {
     if (paused) clearTimeout(simTimer); else scheduleNext();
     setPill();
     if (selectedId) renderPanel(findAgent(selectedId));
-    return paused ? '▶ הפעל' : '⏸ השהה';
+    return paused ? `${ic('play')}<span class="lbl">הפעל</span>` : `${ic('pause')}<span class="lbl">השהה</span>`;
   });
 });
 $('#btn-speed').addEventListener('click', e => {
@@ -1205,13 +1338,13 @@ $('#btn-speed').addEventListener('click', e => {
     await delay(250);
     speed = speed === 1 ? 2 : speed === 2 ? 4 : 1;
     if (!paused) scheduleNext();
-    return `מהירות ×${speed}`;
+    return `${ic('gauge')}<span class="lbl">מהירות ×${speed}</span>`;
   });
 });
 function startMeeting(auto = false) {
   meetingActive = true; meetingDone = true;
   if (window.innerWidth <= 900) switchView('view-scene');
-  toast(auto ? 'ישיבת בוקר אוטומטית — הסוכנים מתאספים ☕' : 'הסוכנים מתאספים לישיבת בוקר ☕');
+  toast(auto ? 'ישיבת בוקר אוטומטית — הסוכנים מתאספים' : 'הסוכנים מתאספים לישיבת בוקר', { icon: 'coffee' });
   office.gatherAll();
   AGENTS.forEach(a => { statOf(a.id).state = 'meeting'; });
   renderPanelDefault();
@@ -1219,7 +1352,7 @@ function startMeeting(auto = false) {
     office.disperseAll();
     AGENTS.forEach(a => { statOf(a.id).state = 'typing'; });
     meetingActive = false;
-    toast('ישיבת הבוקר הסתיימה — חזרו לעבוד 💪');
+    toast('ישיבת הבוקר הסתיימה — חזרו לעבוד', { icon: 'check' });
     if (selectedId) renderPanel(findAgent(selectedId));
   });
 }
@@ -1248,6 +1381,19 @@ function initDemoBoard() {
   AGENTS.forEach((a, i) => {
     const t = (a.demoTasks || []).slice();
     if (!t.length) return;
+    const sb = a.demoBoard; // optional seeded board (titles + labels) so the first screen is a realistic day
+    if (sb) {
+      demoBoard.set(a.id, {
+        doing: sb.doing ? sb.doing.title : null,
+        doingSince: sb.doing ? now - (sb.doing.ago || 3) * 60_000 : 0,
+        todo: (sb.todo || []).map(x => x.title),
+        rank: sb.rank ?? 9,
+        todoWhen: Object.fromEntries((sb.todo || []).map(x => [x.title, x.when || ''])),
+        done: (sb.done || []).map((d, k) => ({ title: d.title, ended: now - (k + 1 + i) * 9 * 60_000, at: d.at })),
+      });
+      // a spare pool for the simulation to recycle
+      return;
+    }
     demoBoard.set(a.id, {
       doing: t[0] || null,
       todo: t.slice(1, i % 2 ? 3 : 2),
@@ -1259,7 +1405,7 @@ function demoTaskStep(a, kind) {
   const b = demoBoard.get(a.id); if (!b || Math.random() > 0.42) return;
   if (b.doing) { b.done.unshift({ title: b.doing, ended: Date.now() }); b.done.length = Math.min(b.done.length, 4); }
   const pool = (a.demoTasks || []);
-  b.doing = b.todo.shift() || null;
+  b.doing = b.todo.shift() || null; b.doingSince = Date.now();
   if (b.todo.length < 2) { // recycle a finished sample task back into the queue
     const recycled = pool.find(t => t !== b.doing && !b.todo.includes(t));
     if (recycled) b.todo.push(recycled);
@@ -1270,10 +1416,11 @@ function boardData() {
     const cols = { todo: [], doing: [], done: [] };
     for (const a of AGENTS) {
       const b = demoBoard.get(a.id); if (!b) continue;
-      b.todo.forEach(title => cols.todo.push({ title, agent: a, status: 'queued' }));
-      if (b.doing) cols.doing.push({ title: b.doing, agent: a, status: 'running', when: 'עכשיו' });
-      b.done.forEach(d => cols.done.push({ title: d.title, agent: a, status: 'done', ts: d.ended, when: when(d.ended) }));
+      b.todo.forEach(title => cols.todo.push({ title, agent: a, status: 'queued', when: b.todoWhen?.[title] || '', rank: b.rank ?? 9 }));
+      if (b.doing) cols.doing.push({ title: b.doing, agent: a, status: 'running', since: b.doingSince || 0, when: 'עכשיו', rank: b.rank ?? 9 });
+      b.done.forEach(d => cols.done.push({ title: d.title, agent: a, status: 'done', ts: d.ended, when: d.at || when(d.ended) }));
     }
+    cols.todo.sort((x, y) => x.rank - y.rank); cols.doing.sort((x, y) => x.rank - y.rank);
     cols.done.sort((x, y) => y.ts - x.ts);
     return { demo: true, columns: cols, updated: Date.now() };
   }
@@ -1334,7 +1481,7 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${c.assigned ? '<span class="kb-manual" title="נוסף ידנית מהלוח">✍️ ידני</span> · ' : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
+        <div class="kb-meta">${c.assigned ? `<span class="kb-manual" title="נוסף ידנית מהלוח">${ic('pencil', 'inline')} ידני</span> · ` : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ${ic('corner-up-right', 'inline')} הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');
@@ -1420,7 +1567,7 @@ document.addEventListener('pointerdown', unlockAudio, { capture: true });
 document.addEventListener('keydown', unlockAudio, { capture: true });
 function renderSoundBtn() {
   const b = $('#btn-sound'); if (!b) return;
-  b.textContent = bellSound.muted ? '🔇' : '🔊';
+  b.innerHTML = ic(bellSound.muted ? 'volume-x' : 'volume-2');
   b.setAttribute('aria-pressed', String(!bellSound.muted));
   b.title = bellSound.muted ? 'צליל הפעמון כבוי' : 'צליל הפעמון פועל';
 }
@@ -1441,11 +1588,11 @@ function renderNotifyBtn() {
 }
 $('#btn-notify')?.addEventListener('click', async () => {
   if (!canNotify) { toast('הדפדפן הזה לא תומך בהתראות. ההודעות יופיעו כאן בחלון.'); return; }
-  if (Notification.permission === 'granted') { notify('🔔 בדיקת התראה', 'ככה תיראה התראה כשסוכן מסיים משימה או פותח PR', true); return; }
+  if (Notification.permission === 'granted') { notify('בדיקת התראה', 'ככה תיראה התראה כשסוכן מסיים משימה או פותח PR', true); return; }
   if (Notification.permission === 'denied') { toast('ההתראות חסומות בהגדרות הדפדפן לאתר הזה', { err: true }); return; }
   try { await Notification.requestPermission(); } catch {}
   renderNotifyBtn();
-  if (Notification.permission === 'granted') toast('🔔 התראות הופעלו');
+  if (Notification.permission === 'granted') toast('התראות הופעלו', { icon: 'bell' });
 });
 renderNotifyBtn();
 function notify(title, body, force = false) {
@@ -1475,11 +1622,11 @@ function ringFor(a, why, he, { silentNotify = false } = {}) {
   if (bellLog.day !== d) { bellLog.day = d; bellLog.today = 0; }
   bellLog.today++;
   const prNum = why === 'pr' ? (String(he || '').match(/PR\s*#?\s*(\d+)/) || [])[1] : null;
-  const label = why === 'pr' ? `${a.name} · ${prNum ? 'PR #' + prNum : 'PR חדש'}` : why === 'manual' ? `${a.name} מצלצל/ת 🔔` : `${a.name} · ${he || 'סיים משימה'}`;
+  const label = why === 'pr' ? `${a.name} · ${prNum ? 'PR #' + prNum : 'PR חדש'}` : why === 'manual' ? `${a.name} מצלצל/ת` : `${a.name} · ${he || 'סיים משימה'}`;
   office.ringBell(a.id, label);
   if (replay.active) return;
-  const title = why === 'pr' ? `🔔 ${a.name} פתח/ה PR` : why === 'manual' ? '' : `🔔 ${a.name} סיים/ה משימה`;
-  if (title) toast(`${title}${he ? ' · ' + String(he).replace(/^סיים:\s*/, '').replace(/\s*🔔$/, '') : ''}`);
+  const title = why === 'pr' ? `${a.name} פתח/ה PR` : why === 'manual' ? '' : `${a.name} סיים/ה משימה`;
+  if (title) toast(`${title}${he ? ' · ' + String(he).replace(/^סיים:\s*/, '').replace(/\s*🔔$/, '') : ''}`, { icon: why === 'pr' ? 'git-pull-request' : 'bell-ring' });
   if (mode === 'live' && title && !silentNotify) notify(title, String(he || '').replace(/\s*🔔$/, ''));
   renderStrip();
 }
@@ -1494,7 +1641,7 @@ let drawerOpen = LS.get('drawer', '1') !== '0';
 function applyDrawer(animate = true) {
   const lay = $('#layout'), btn = $('#drawer-toggle');
   lay.classList.toggle('drawer-closed', !drawerOpen);
-  btn.textContent = drawerOpen ? '‹' : '›';
+  btn.innerHTML = ic(drawerOpen ? 'chevron-left' : 'chevron-right');
   btn.setAttribute('aria-expanded', String(drawerOpen));
   btn.title = drawerOpen ? 'סגירת הפאנל' : 'פתיחת הפאנל';
   const desktop = window.innerWidth > 900;
@@ -1518,12 +1665,12 @@ function renderStrip() {
     const list = roster().filter(a => office?.hasAgent(a.id));
     const alerts = mode === 'live' ? liveAlerts().length : 0;
     const ti = office?.timeInfo?.() || { hhmm: '--:--', phase: 'day' };
-    const icon = ti.phase === 'night' ? '🌙' : ti.phase === 'day' ? '☀️' : '🌅';
+    const icon = ic(ti.phase === 'night' ? 'moon' : ti.phase === 'day' ? 'sun' : 'sunrise');
     const working = list.filter(a => ['working', 'typing'].includes(stripStatus(a).s)).length;
     // live: the same numbers as the KPI cards (connected · tasks today); demo: leads + revenue
     const k = mode === 'live' ? Object.fromEntries(liveKpis().map(([id, , v]) => [id, v])) : null;
     const s1 = k ? [k.online, 'מחוברים'] : [`${working}/${list.length}`, 'עובדים'];
-    const s2 = k ? [k.tasks, 'משימות'] : [String(kpis.leads.v), 'לידים'];
+    const s2 = k ? [k.tasks, 'משימות'] : [String(kpis.leads.v), 'הושלמו'];
     el.innerHTML = list.map(a => {
       const st = stripStatus(a), ini = esc((a.emblem?.mono || a.name || a.id).slice(0, 2));
       return `<button class="st-ag${st.alert ? ' alert' : ''}" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)};--sd:${STRIP_DOT[st.s] || '#8b8577'}" title="${esc(a.name)} · ${esc(st.label)}" aria-label="${esc(a.name)}: ${esc(st.label)}">${ini}<span class="st-dot"></span></button>`;
@@ -1531,8 +1678,8 @@ function renderStrip() {
       <div class="st-stat" title="${esc(s1[1])}"><b>${esc(s1[0])}</b>${esc(s1[1])}</div>
       <div class="st-stat" title="${esc(s2[1])} היום"><b>${esc(s2[0])}</b>${esc(s2[1])}</div>
       <div class="st-stat" title="אירועים מאז שהמסך נפתח"><b>${feedTotal.n}</b>אירועים</div>
-      <div class="st-stat" title="צלצולים בפעמון היום"><b>${bellLog.today}</b>🔔</div>
-      ${alerts ? `<div class="st-stat warn" title="התראות"><b>${alerts}</b>⚠</div>` : ''}
+      <div class="st-stat" title="צלצולים בפעמון היום"><b>${bellLog.today}</b>${ic('bell')}</div>
+      ${alerts ? `<div class="st-stat warn" title="התראות"><b>${alerts}</b>${ic('triangle-alert')}</div>` : ''}
       <div class="st-sep"></div>
       <div class="st-stat" title="השעה בחדר"><b>${icon}</b>${esc(ti.hhmm)}</div>`;
     el.querySelectorAll('.st-ag').forEach(b => b.addEventListener('click', () => { drawerOpen = true; LS.set('drawer', '1'); applyDrawer(); selectAgent(b.dataset.id, true); }));
@@ -1549,6 +1696,7 @@ function onTimeOfDay(info) {
   if (card && key !== onTimeOfDay.key) {
     onTimeOfDay.key = key;
     card.style.setProperty('--night', info.night.toFixed(3));
+    if (cv) cv.setNight(info.night);
     card.style.setProperty('--dawn', (info.phase === 'dawn' || info.phase === 'dusk' ? 1 : 0).toString());
   }
   if (info.phase !== lastTod) { lastTod = info.phase; document.body.dataset.tod = info.phase; renderStrip(); }
@@ -1556,12 +1704,12 @@ function onTimeOfDay(info) {
 
 /* ---- conversations: demo scripts (demo mode) and quiet emoji small talk (live mode, no invented facts) ---- */
 const DEMO_CHATS = [
-  { lines: ['הליד מאתמול חזר אליי', 'מעולה, אני מכינה הצעת מחיר', 'שולחת לך את הפרטים עכשיו'], agreed: true },
-  { lines: ['מי לוקח את הלקוח מחיפה?', 'אני, יש לי חלון ב-14:00', 'סגור, רושמת ביומן'], agreed: true },
-  { lines: ['ראית את הדוח השבועי?', 'כן, המספרים עלו 12% 🚀'], agreed: false },
-  { lines: ['צריך לעדכן את תבנית המייל', 'אני על זה אחרי הצהריים', 'תודה! תעדכן כשמוכן'], agreed: true },
+  { lines: ['ה-PR מוכן לסקירה, מי פנוי?', 'אני על זה, שתי דקות', 'תודה, אשחרר אחרי האישור'], agreed: true },
+  { lines: ['נתוני ShortiGo מוכנים', 'מעולה, מתחיל לארוז את ה-release', 'מעדכן את הערות השחרור'], agreed: true },
+  { lines: ['הבדיקה במובייל נכשלה בדף התשלום', 'שולח לך צילום מסך', 'קיבלתי, מתקן עכשיו'], agreed: true },
+  { lines: ['ראית את דוח הקמפיין השבועי?', 'כן, המספרים עלו 12% 🚀'], agreed: false },
+  { lines: ['סיכום המתחרים עודכן', 'יש משהו שדורש תשומת לב?', 'שני דברים, אשלח לך'], agreed: true },
   { lines: ['קפה?', 'תמיד ☕'], agreed: false },
-  { lines: ['הלקוח ביקש דמו ביום חמישי', 'אני מכין מצגת', 'ואני דואגת לחדר ישיבות'], agreed: true },
 ];
 const LIVE_SMALLTALK = [['☕?', '👍'], ['👋', '🙂'], ['🚀', '🔥'], ['💡', '👀'], ['🙌', '😄']];
 const life = { on: LS.get('life', '1') !== '0', nextChat: 22, nextLive: 0, t: 0, lastChat: 0 };
@@ -1605,7 +1753,7 @@ function renderActions() {
   $('#ac-agents').innerHTML = list.map(a => `<button class="ac-agent" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)}" aria-pressed="${a.id === acState.agent}">${esc(a.name)}</button>`).join('');
   $('#ac-agents').querySelectorAll('.ac-agent').forEach(b => b.addEventListener('click', () => { acState.agent = b.dataset.id; renderActions(); }));
   const lifeBtn = document.querySelector('[data-act="life"]');
-  lifeBtn.textContent = life.on ? '🌱 חיים במשרד: פועל' : '🌱 חיים במשרד: כבוי';
+  lifeBtn.innerHTML = `${ic('sprout')}<span class="lbl">${life.on ? 'חיים במשרד: פועל' : 'חיים במשרד: כבוי'}</span>`;
   lifeBtn.setAttribute('aria-pressed', String(life.on));
   const tm = office?.timeInfo?.().mode || 'real';
   document.querySelectorAll('#ac-time [data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === (tm === 'real' ? 'real' : acState.time))));
@@ -1640,7 +1788,7 @@ document.querySelectorAll('#actions-pop [data-act]').forEach(b => b.addEventList
   }
   else if (act === 'meeting') {
     office.gatherAll(); clearTimeout(teamMeetTimer);
-    toast('👥 ישיבת צוות על השטיח');
+    toast('ישיבת צוות על השטיח', { icon: 'users' });
     teamMeetTimer = setTimeout(() => office.disperseAll(), 9000);
   }
   else if (act === 'home') { clearTimeout(teamMeetTimer); office.disperseAll(); }

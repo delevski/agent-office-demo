@@ -67,6 +67,12 @@ Key design decisions:
 - **Private by default.** Live data needs a password login (signed HttpOnly cookie, login rate-limited per IP). The public `/showcase` route renders demo mode only and never calls the private API.
 - **No build, no assets.** All 3D geometry is generated in code with vendored Three.js; static furniture is merged per material, pixel ratio and shadows drop automatically on slow phones, and the render loop pauses in background tabs. `prefers-reduced-motion` is respected.
 
+### Design (Apple-style redesign)
+
+- **Chrome.** A floating frosted-white pill on top (brand, clock, meeting/pause/speed, sound, notifications, login) and a frosted dock at the bottom (actions, task board, skills shelf, reviews, replay). Thin Lucide outline icons from one inline SVG sprite in `index.html` (`<svg class="ico"><use href="#i-bell"/></svg>`; `main.js` has `ic('bell')` for templates), no emoji as icons. One blue accent (`--accent: #007aff`), rounded white sheets for the drawer, task board, reviews and chat panels, system font stack (SF on Apple devices, Heebo as the Hebrew fallback), soft shadows, RTL first.
+- **Room.** 19 x 14.4 floor (was 15 x 11), three large windows, desks 5.6 apart in columns and 4.9 apart in rows (6 desks, 3 x 2), bell / lounge / coffee corner moved out to match. The home camera frames the whole room on desktop and phone. Brighter daylight (hemisphere + sun + fill), light oak floor and desks, white walls.
+- Day/night cycle, bell, conversation bubbles, pajamas and every control keep working. `roster.json` is untouched.
+
 ### Main endpoints
 
 | Method & path | Auth | Purpose |
@@ -159,3 +165,7 @@ Requests authorize only their stated work. Payment, third-party communication, m
 Board requests are separate from the short activity history, so they remain visible beyond the old 15-card limit and survive restarts. Storage is bounded at 300 assignment records (all-three requests consume three). At capacity the server rejects new requests explicitly; it never drops unfinished work silently. An archive UI is a later extension.
 
 Run `npm test`. The board tests exercise the Worker auth boundary plus the Durable Object with in-memory storage and mock consumers, without real Slack sends or paid model calls.
+
+## Concept view (Apple v2)
+
+The default scene is the approved Apple concept room (`assets/office-room-day.jpg` / `office-room-night.jpg`, the concept picture with its people removed) at the concept frame's exact layout: floating frosted top bar, left tool column, bottom dock, and the task board / review / chat panel open on the right (560 px). The people are real rigged 3D characters (`stage3d.js`, three.js) on a transparent canvas laid exactly over the picture: the camera is the picture's own camera, fitted from the painted desks' vanishing points (`concept-calib.js`), so a person standing on the painted floor has the right size and perspective, and invisible depth-only desk boxes let the painted desks hide legs. They have skeletal animation (idle, walk, sit down, stand up, sit and talk; typing is two-bone IK to the keyboard), each agent has their own skin, hair and clothes colours (from the roster), pyjamas and sleeping at night. Name pills, status dots, speech bubbles and the bell come from the agents of the current mode (`roster.json` `agents` in demo, the live roster after login, at most 6, one desk each, `concept.js`). Movement is planned on the painted floor, then played as skeletal motion at the matching spot. The cube button in the tool column switches to the live three.js room (`?view=3d` also works). **Character asset:** `assets/models/agent.glb` is the Quaternius *Universal Animation Library* mannequin and a subset of its clips (CC0 1.0, see `assets/models/LICENSE-quaternius-cc0.txt`), trimmed to 0.6 MB; the glTF loader files in `vendor/` are from three.js r170 (MIT).

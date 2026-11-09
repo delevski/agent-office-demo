@@ -7,11 +7,11 @@ import * as THREE from './three.module.js';
 import { drawEmblem, emblemOf, shade, inkOn } from './emblems.js';
 
 const C = {
-  floor: '#d7ae7c', floorDark: '#c49a68', slab: '#5b4331', slabTop: '#8a6446',
-  wall: '#f3eadb', wallShade: '#ece0cc', wains: '#8fae9b', wainsDark: '#7c9a87', rail: '#f5b301',
-  wood: '#b9875a', woodLight: '#d8b58a', woodDark: '#6f4c33', white: '#f7f4ee', metal: '#3b3a40',
-  fabric: '#3d4a5c', fabricLight: '#566a82', rug: '#c86f4f', rugCream: '#f1e1c4', rugTeal: '#3f7d78',
-  leaf: '#5fae6e', leafDark: '#3f8a52', leafLight: '#86c77e', pot: '#efe7da', potTerra: '#c9744f',
+  floor: '#e6cfa9', floorDark: '#d6bb90', slab: '#cfc9be', slabTop: '#ebe7dd',
+  wall: '#fbfaf7', wallShade: '#f4f2ed', wains: '#ebe8e1', wainsDark: '#e0dcd3', rail: '#8ab8f5',
+  wood: '#d2ad80', woodLight: '#eed8b3', woodDark: '#a98660', white: '#fbfaf7', metal: '#8d9097',
+  fabric: '#d5d9e0', fabricLight: '#a9bad0', rug: '#dcb59c', rugCream: '#f7eddc', rugTeal: '#8fbfb8',
+  leaf: '#5fae6e', leafDark: '#3f8a52', leafLight: '#86c77e', pot: '#f4efe6', potTerra: '#d08a68',
   screenOff: '#0d1016', ink: '#1a1407',
 };
 
@@ -109,12 +109,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.14;
+  renderer.toneMappingExposure = 1.18;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = mobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  const ROOM = { w: 15, d: 11, h: 3.8 };
+  const ROOM = { w: 19, d: 14.4, h: 4.2 }; // Apple redesign: a bigger, airier room
   const HW = ROOM.w / 2, HD = ROOM.d / 2;
 
   /* ---------------- camera: isometric ortho with eased zoom / orbit / pan ---------------- */
@@ -159,7 +159,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const all = fitZoom(-HW - 0.3, HW + 0.3, -HD - 0.3, HD + 0.4);
     LIM.zMax = all.zoom * 1.3;
     if (a < 0.8) { // phone portrait: the whole room, letting the empty floor corners crop; a pinch shows the rest
-      const f = fitZoom(-HW, HW, -HD, HD, ROOM.h, 0.7);
+      const f = fitZoom(-HW - 0.2, HW + 0.2, -HD, HD, ROOM.h, 0.72);
       home = { zoom: f.zoom, t: f.center, el: homeEl() };
     } else {
       home = { zoom: all.zoom * 1.02, t: all.center, el: homeEl() };
@@ -182,18 +182,18 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
 
   /* ---------------- lights: soft daylight from the windows + warm interior fill ---------------- */
-  const hemi = new THREE.HemisphereLight(0xfff3e0, 0x9a7b5c, 1.25);
+  const hemi = new THREE.HemisphereLight(0xfffaf0, 0xc7b49c, 1.6);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe2b8, 2.6);
-  sun.position.set(-14, 11, 3.5);
+  sun.position.set(-17, 13, 4.5);
   sun.target.position.set(0, 0, 0);
   sun.castShadow = true;
   sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
-  Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9, near: 1, far: 45 });
+  Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 11, bottom: -11, near: 1, far: 55 });
   sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.03; sun.shadow.radius = 3;
   scene.add(sun, sun.target);
-  const fill = new THREE.DirectionalLight(0xc9dcff, 0.55);
-  fill.position.set(8, 9, 10);
+  const fill = new THREE.DirectionalLight(0xdbe8ff, 0.7);
+  fill.position.set(10, 11, 12);
   scene.add(fill);
 
   /* ---------------- materials (shared by colour so merged scenery stays few draw calls) ---------------- */
@@ -224,7 +224,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       while (x < w) {
         const len = 140 + rnd() * 180;
         const l = 0.9 + rnd() * 0.16;
-        const base = [215, 174, 124].map(v => Math.min(255, Math.round(v * l)));
+        const base = [236, 208, 166].map(v => Math.min(255, Math.round(v * l)));
         c.fillStyle = `rgb(${base})`; c.fillRect(x, r * ph, len, ph);
         // grain
         c.globalAlpha = 0.09;
@@ -234,10 +234,10 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
           c.beginPath(); c.moveTo(x, yy); c.bezierCurveTo(x + len * 0.3, yy + (rnd() - 0.5) * 6, x + len * 0.7, yy + (rnd() - 0.5) * 6, x + len, yy); c.stroke();
         }
         c.globalAlpha = 1;
-        c.fillStyle = 'rgba(70,40,20,.35)'; c.fillRect(x, r * ph, 2, ph);
+        c.fillStyle = 'rgba(120,85,50,.22)'; c.fillRect(x, r * ph, 2, ph);
         x += len;
       }
-      c.fillStyle = 'rgba(70,40,20,.32)'; c.fillRect(0, r * ph, w, 2);
+      c.fillStyle = 'rgba(120,85,50,.2)'; c.fillRect(0, r * ph, w, 2);
     }
   }, { repeat: [3.2, 2.4] });
   const rugTex = canvasTex(512, 512, (c, w, h) => {
@@ -330,7 +330,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   box(wallB, ROOM.w + T, 0.07, 0.07, C.rail, 0, 1.08, -HD + 0.02, { cast: false });
   box(wallB, ROOM.w + T, 0.12, T + 0.06, C.wallShade, 0, ROOM.h + 0.06, -HD - T / 2, { cast: false });
   // left wall (x-) with two window openings
-  const WIN = [{ z: -2.7, w: 2.3 }, { z: 1.7, w: 2.3 }], WY0 = 1.05, WY1 = 3.05;
+  const WIN = [{ z: -4.8, w: 3.2 }, { z: 0.2, w: 3.2 }, { z: 5.2, w: 3.2 }], WY0 = 0.9, WY1 = 3.7;
   const LX = -HW - T / 2;
   box(wallL, T, 1.05, ROOM.d, C.wainsDark, LX, 0.525, 0, { cast: true });
   box(wallL, T, ROOM.h - WY1, ROOM.d, C.wallShade, LX, WY1 + (ROOM.h - WY1) / 2, 0, { cast: true });
@@ -405,8 +405,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
 
   /* ---------------- desks (pods facing each other), chairs, monitors ---------------- */
   const deskSpots = [];
-  const ROWS = [{ z: -2.05, face: 1 }, { z: 1.35, face: -1 }]; // face = direction the sitter looks (+z = towards camera)
-  const COLS = [-4.0, 0.0, 4.0];
+  const ROWS = [{ z: -2.9, face: 1 }, { z: 2.0, face: -1 }]; // face = direction the sitter looks (+z = towards camera)
+  const COLS = [-5.6, 0.0, 5.6];
   const screenCode = canvasTex(256, 256, (c, w, h) => {
     c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
     const rnd = seeded(5);
@@ -452,10 +452,10 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }));
   // order: back row first (faces visible), then front row
   // potted desk plants on two desks
-  plant(-4.85, -2.25, 0.32); plant(4.85, 1.55, 0.32, 1);
+  plant(-6.85, -3.1, 0.32); plant(6.85, 2.2, 0.32, 1);
 
   /* ---------------- bookcase (skills shelves) — back-left ---------------- */
-  const SHELF = { x0: -7.25, x1: -3.25, z: -HD + 0.24, rows: 6, y0: 0.16, rowH: 0.44 };
+  const SHELF = { x0: -8.6, x1: -4.6, z: -HD + 0.24, rows: 6, y0: 0.16, rowH: 0.44 };
   const shelfW = SHELF.x1 - SHELF.x0, shelfCx = (SHELF.x0 + SHELF.x1) / 2;
   const shelfTop = SHELF.y0 + SHELF.rows * SHELF.rowH;
   rbox(stat, shelfW + 0.12, 0.12, 0.5, 0.03, C.woodDark, shelfCx, 0.06, SHELF.z);
@@ -466,7 +466,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   const shelfSign = add(scene, new THREE.PlaneGeometry(1.6, 0.34), new THREE.MeshStandardMaterial({
     map: canvasTex(512, 108, (c, w, h) => {
       c.fillStyle = '#2b2118'; rr(c, 0, 0, w, h, 26); c.fill();
-      c.fillStyle = '#f5b301'; c.font = '800 54px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.direction = 'rtl';
+      c.fillStyle = '#0a84ff'; c.font = '800 54px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.direction = 'rtl';
       c.fillText('מדף הסקילים', w / 2, h / 2 + 3);
     }), roughness: 0.6, transparent: true,
   }), shelfCx, shelfTop + 0.36, -HD + 0.02, { cast: false });
@@ -476,7 +476,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   scene.add(shelfHit);
 
   /* ---------------- kanban board — centre of the back wall ---------------- */
-  const BOARD = { cx: -0.3, cy: 2.18, w: 4.9, h: 2.62, z: -HD + 0.07 };
+  const BOARD = { cx: -0.2, cy: 2.35, w: 5.6, h: 3.0, z: -HD + 0.07 };
   rbox(wallB, BOARD.w + 0.22, BOARD.h + 0.22, 0.08, 0.04, C.woodDark, BOARD.cx, BOARD.cy, BOARD.z);
   rbox(wallB, BOARD.w + 0.1, 0.07, 0.16, 0.02, C.woodDark, BOARD.cx, BOARD.cy - BOARD.h / 2 - 0.13, BOARD.z + 0.07); // marker tray
   for (const [dx, col] of [[-0.9, '#ef4444'], [-0.7, '#2563eb'], [-0.5, '#16a34a']]) {
@@ -492,7 +492,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   scene.add(boardMesh);
 
   /* ---------------- coffee corner — back-right ---------------- */
-  const CO = { x0: 2.75, x1: 7.3, z: -HD + 0.36 };
+  const CO = { x0: 3.6, x1: 8.2, z: -HD + 0.36 };
   const coW = CO.x1 - CO.x0, coCx = (CO.x0 + CO.x1) / 2;
   rbox(stat, coW, 0.88, 0.72, 0.03, C.white, coCx, 0.44, CO.z);
   rbox(stat, coW + 0.06, 0.07, 0.78, 0.02, C.woodDark, coCx, 0.915, CO.z + 0.02);
@@ -538,7 +538,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     g.addColorStop(0, nightK > 0.5 ? '#141a33' : '#1d1a14'); g.addColorStop(1, nightK > 0.5 ? '#0a0d1c' : '#0f0d0a');
     c.fillStyle = g; c.fillRect(0, 0, W, H);
     c.direction = 'rtl'; c.textAlign = 'right';
-    c.fillStyle = '#f5b301'; c.font = '800 26px Heebo, sans-serif'; c.fillText('אירועים היום', W - 26, 44);
+    c.fillStyle = '#0a84ff'; c.font = '800 26px Heebo, sans-serif'; c.fillText('אירועים היום', W - 26, 44);
     c.fillStyle = '#f5efe4'; c.font = '900 46px Heebo, sans-serif'; c.fillText(String(total), W - 26, 96);
     const max = Math.max(4, ...counts.map(x => x.v));
     const n = Math.max(1, counts.length), bw = Math.min(46, (W - 70) / n - 10), gap = n > 1 ? (W - 60 - n * bw) / (n - 1) : 0;
@@ -582,7 +582,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
 
   /* ---------------- lounge: sofa, floor lamp, rug, big plants ---------------- */
-  const MEET = new THREE.Vector3(0.6, 0, 4.05);
+  const MEET = new THREE.Vector3(0.6, 0, 4.9);
   const rug = add(scene, new THREE.CircleGeometry(1.75, 48), new THREE.MeshStandardMaterial({ map: rugTex, roughness: 1 }), MEET.x, 0.012, MEET.z, { cast: false, rx: -Math.PI / 2 });
   rug.userData.keep = true;
   {
@@ -594,33 +594,33 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     rbox(s, 0.16, 0.36, 0.42, 0.08, '#f5b301', -0.12, 0.72, -0.6, { rz: -0.2 });
     rbox(s, 0.16, 0.34, 0.4, 0.08, C.rugCream, -0.12, 0.72, 0.62, { rz: -0.15 });
     for (const dz of [-1.1, 1.1]) for (const dx of [-0.35, 0.35]) cyl(s, 0.03, 0.03, 0.12, 6, C.woodDark, dx, 0.06, dz);
-    s.position.set(-HW + 0.62, 0, 3.95);
+    s.position.set(-HW + 0.62, 0, 4.7);
     stat.add(s);
     // low side table with a laptop and a book
-    cyl(stat, 0.42, 0.42, 0.05, 28, C.woodLight, -HW + 2.0, 0.46, 3.3);
-    cyl(stat, 0.05, 0.08, 0.44, 10, C.metal, -HW + 2.0, 0.22, 3.3);
-    cyl(stat, 0.24, 0.26, 0.02, 18, C.metal, -HW + 2.0, 0.01, 3.3);
+    cyl(stat, 0.42, 0.42, 0.05, 28, C.woodLight, -HW + 2.0, 0.46, 4.05);
+    cyl(stat, 0.05, 0.08, 0.44, 10, C.metal, -HW + 2.0, 0.22, 4.05);
+    cyl(stat, 0.24, 0.26, 0.02, 18, C.metal, -HW + 2.0, 0.01, 4.05);
     { // laptop: base + hinged screen, turned towards the sofa
       const lap = new THREE.Group();
       rbox(lap, 0.44, 0.022, 0.3, 0.01, '#c9ccd3', 0, 0.01, 0);
       const scr = new THREE.Group(); scr.position.set(0, 0.02, -0.15); scr.rotation.x = -0.28; lap.add(scr);
       rbox(scr, 0.44, 0.29, 0.018, 0.01, '#c9ccd3', 0, 0.145, 0);
       box(scr, 0.4, 0.25, 0.004, '#2b3a55', 0, 0.145, 0.011, { cast: false });
-      lap.position.set(-HW + 2.0, 0.485, 3.25); lap.rotation.y = -1.1;
+      lap.position.set(-HW + 2.0, 0.485, 4.0); lap.rotation.y = -1.1;
       stat.add(lap);
     }
-    rbox(stat, 0.2, 0.04, 0.28, 0.01, '#3f7d78', -HW + 2.18, 0.505, 3.55, { ry: -0.3 });
+    rbox(stat, 0.2, 0.04, 0.28, 0.01, '#3f7d78', -HW + 2.18, 0.505, 4.3, { ry: -0.3 });
     // bean bag near the plant (right side of the lounge)
-    const bean = add(stat, new THREE.SphereGeometry(0.42, 20, 14), '#f2a65a', HW - 1.9, 0.3, 4.6);
+    const bean = add(stat, new THREE.SphereGeometry(0.42, 20, 14), '#f2a65a', HW - 2.4, 0.3, 5.7);
     bean.scale.set(1.15, 0.68, 1.1);
     // floor lamp
-    cyl(stat, 0.2, 0.2, 0.03, 18, C.metal, -HW + 0.55, 0.015, 5.0);
-    cyl(stat, 0.02, 0.02, 1.7, 8, C.metal, -HW + 0.55, 0.86, 5.0);
+    cyl(stat, 0.2, 0.2, 0.03, 18, C.metal, -HW + 0.55, 0.015, 6.1);
+    cyl(stat, 0.02, 0.02, 1.7, 8, C.metal, -HW + 0.55, 0.86, 6.1);
   }
-  const lampShade = add(scene, new THREE.CylinderGeometry(0.16, 0.26, 0.3, 20, 1, true), new THREE.MeshStandardMaterial({ color: '#fff1d0', emissive: '#ffd58a', emissiveIntensity: 1.2, side: THREE.DoubleSide }), -HW + 0.55, 1.78, 5.0, { cast: false });
+  const lampShade = add(scene, new THREE.CylinderGeometry(0.16, 0.26, 0.3, 20, 1, true), new THREE.MeshStandardMaterial({ color: '#fff1d0', emissive: '#ffd58a', emissiveIntensity: 1.2, side: THREE.DoubleSide }), -HW + 0.55, 1.78, 6.1, { cast: false });
   lampShade.userData.keep = true;
   const lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffcf80, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
-  lampGlow.scale.set(2.2, 2.2, 1); lampGlow.position.set(-HW + 0.55, 1.7, 5.0); scene.add(lampGlow);
+  lampGlow.scale.set(2.2, 2.2, 1); lampGlow.position.set(-HW + 0.55, 1.7, 6.1); scene.add(lampGlow);
   plant(-HW + 0.6, -0.45, 0.85, 0);
   plant(HW - 0.6, HD - 0.65, 1.2, 1);
   plant(HW - 0.55, -0.6, 0.8, 2);
@@ -674,7 +674,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
 
   /* ---------------- shared sprites: name tags, status bubbles, sparkles ---------------- */
   const STATUS_LABEL = { working: 'עובד/ת', idle: 'הפסקת קפה', blocked: 'ממתין/ה', offline: 'לא מחובר/ת' };
-  const STATUS_DOT = { working: '#4ade80', idle: '#f5b301', blocked: '#f97316', offline: '#8b8577' };
+  const STATUS_DOT = { working: '#34c759', idle: '#007aff', blocked: '#ff9500', offline: '#aeaeb2' };
   function emblemTexture(meta) {
     return canvasTex(128, 128, (c) => drawEmblem(c, 4, 4, 120, meta));
   }
@@ -684,8 +684,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     c.font = '800 46px Heebo, sans-serif';
     const name = ellipsize(c, ch.meta.name, 250);
     const nameW = c.measureText(name).width;
-    const sub = ch.alert ? '⚠ ' + ch.alert.label
-      : ch.meetingLabel ? '👥 ' + ch.meetingLabel
+    const sub = ch.alert ? ch.alert.label
+      : ch.meetingLabel ? ch.meetingLabel
       : ch.activity && ch.status === 'working' ? '▸ ' + ch.activity
       : (STATUS_LABEL[ch.status] || '');
     c.font = '600 28px Heebo, sans-serif';
@@ -693,19 +693,20 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     const subW = ch.showStatus ? c.measureText(subText).width + 26 : 0;
     const inner = Math.max(nameW, subW);
     const w = Math.min(W - 8, inner + 128), x = (W - w) / 2;
-    c.fillStyle = ch.alert ? 'rgba(58,14,14,.94)' : ch.status === 'offline' ? 'rgba(30,27,22,.78)' : 'rgba(22,17,10,.9)';
-    rr(c, x, 10, w, H - 20, (H - 20) / 2); c.fill();
-    c.strokeStyle = ch.alert ? '#ef4444' : ch.meta.color; c.globalAlpha = ch.status === 'offline' && !ch.alert ? 0.45 : 1; c.lineWidth = ch.alert ? 6 : 4; c.stroke(); c.globalAlpha = 1;
+    c.save(); c.shadowColor = 'rgba(20,30,60,.28)'; c.shadowBlur = 14; c.shadowOffsetY = 4;
+    c.fillStyle = ch.alert ? 'rgba(255,240,238,.97)' : ch.status === 'offline' ? 'rgba(244,244,247,.9)' : 'rgba(255,255,255,.96)';
+    rr(c, x, 10, w, H - 28, (H - 28) / 2); c.fill(); c.restore();
+    c.strokeStyle = ch.alert ? '#ff3b30' : ch.meta.color; c.globalAlpha = ch.status === 'offline' && !ch.alert ? 0.4 : 0.9; c.lineWidth = ch.alert ? 5 : 3; c.stroke(); c.globalAlpha = 1;
     drawEmblem(c, x + w - 100, 18, H - 36, ch.meta);
     c.direction = 'rtl'; c.textAlign = 'right'; c.textBaseline = 'middle';
-    c.fillStyle = ch.status === 'offline' ? '#b9b2a4' : '#f7f1e6';
+    c.fillStyle = ch.status === 'offline' ? '#8e8e93' : '#1d1d1f';
     c.font = '800 46px Heebo, sans-serif';
     const tx = x + w - 112;
     c.fillText(name, tx, ch.showStatus ? H / 2 - 13 : H / 2 + 2);
     if (ch.showStatus) {
-      c.font = (ch.alert ? '800' : '600') + ' 28px Heebo, sans-serif'; c.fillStyle = ch.alert ? '#fecaca' : '#cfc6b4';
+      c.font = (ch.alert ? '800' : '600') + ' 28px Heebo, sans-serif'; c.fillStyle = ch.alert ? '#c0261b' : '#6e6e73';
       c.fillText(subText, tx - 22, H / 2 + 26);
-      c.fillStyle = ch.alert ? '#ef4444' : STATUS_DOT[ch.status]; c.beginPath(); c.arc(tx - 8, H / 2 + 25, 7, 0, 7); c.fill();
+      c.fillStyle = ch.alert ? '#ff3b30' : STATUS_DOT[ch.status]; c.beginPath(); c.arc(tx - 8, H / 2 + 25, 7, 0, 7); c.fill();
     }
     ch.tagTex.needsUpdate = true;
   }
@@ -941,7 +942,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
   agentsMeta.forEach(meta => addCharacter(meta));
   // walking: go via the aisles between desk columns so nobody walks through furniture
-  const AISLES = [-6.1, -2.0, 2.0, 6.1];
+  const AISLES = [-8.4, -2.8, 2.8, 8.4];
   function routeTo(from, to) {
     const ax = AISLES.reduce((b, a) => Math.abs(a - from.x) + Math.abs(a - to.x) * 0.35 < Math.abs(b - from.x) + Math.abs(b - to.x) * 0.35 ? a : b, AISLES[0]);
     const pts = [new THREE.Vector3(ax, 0, from.z), new THREE.Vector3(ax, 0, to.z), new THREE.Vector3(to.x, 0, to.z)];
@@ -972,7 +973,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   if (!reduced) {
     const N = mobile ? 70 : 140, pos = new Float32Array(N * 3), seeds = new Float32Array(N);
     const rnd = seeded(42);
-    for (let i = 0; i < N; i++) { pos[i * 3] = -HW + 0.3 + rnd() * 4.6; pos[i * 3 + 1] = 0.3 + rnd() * 2.8; pos[i * 3 + 2] = -4.2 + rnd() * 7.5; seeds[i] = rnd() * 100; }
+    for (let i = 0; i < N; i++) { pos[i * 3] = -HW + 0.3 + rnd() * 5.6; pos[i * 3 + 1] = 0.3 + rnd() * 2.8; pos[i * 3 + 2] = -6 + rnd() * 11; seeds[i] = rnd() * 100; }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     dust = new THREE.Points(g, new THREE.PointsMaterial({ map: glowTex, size: 0.09, transparent: true, opacity: 0.7, color: 0xfff1cf, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
     dust.userData.seeds = seeds; dust.userData.base = pos.slice();
@@ -1112,7 +1113,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
 
   /* ---------------- kanban board drawing ---------------- */
-  const COLS_HE = [['todo', 'לביצוע', '#94a3b8'], ['doing', 'בעבודה', '#f5b301'], ['done', 'הושלם', '#22c55e']];
+  const COLS_HE = [['todo', 'לביצוע', '#94a3b8'], ['doing', 'בעבודה', '#0a84ff'], ['done', 'הושלם', '#22c55e']];
   function drawBoard(data = {}) {
     const c = boardCanvas.getContext('2d'), W = BW, H = BH, k = W / 1536;
     const S = v => v * k;
@@ -1168,7 +1169,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
         c.fillText(ellipsize(c, sub, maxT), x + colW - S(124), y + S(90));
         if (card.status === 'failed') { c.fillStyle = '#ef4444'; c.beginPath(); c.arc(x + S(40), y + S(40), S(9), 0, 7); c.fill(); }
         if (key === 'doing' && !reduced) { // tiny progress shimmer marker
-          c.fillStyle = '#f5b301'; c.beginPath(); c.arc(x + S(40), y + S(40), S(8), 0, 7); c.fill();
+          c.fillStyle = '#0a84ff'; c.beginPath(); c.arc(x + S(40), y + S(40), S(8), 0, 7); c.fill();
         }
       });
       if (list.length > shown.length) {
@@ -1234,7 +1235,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
 
   /* ---------------- the bell corner (front-right): a brass bell on a wooden frame ---------------- */
-  const BELL = { x: 6.55, z: 3.05, top: 2.25 };
+  const BELL = { x: 8.0, z: 4.6, top: 2.25 };
   const bellRoot = new THREE.Group(); bellRoot.position.set(BELL.x, 0, BELL.z); scene.add(bellRoot);
   const bellWood = M(C.woodDark), brass = new THREE.MeshStandardMaterial({ color: '#d9a43a', metalness: 0.75, roughness: 0.28, emissive: '#3a2400', emissiveIntensity: 0.25 });
   rbox(bellRoot, 1.0, 0.08, 0.7, 0.03, bellWood, 0, 0.04, 0);
@@ -1249,7 +1250,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   const ropeKnot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), M('#c9b58f')); ropeKnot.position.y = -1.38; bellPivot.add(ropeKnot);
   const bellSign = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 96, (c, w, h) => {
     c.fillStyle = '#2b2118'; rr(c, 4, 4, w - 8, h - 8, 30); c.fill();
-    c.fillStyle = '#f5b301'; c.font = '800 46px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.direction = 'rtl';
+    c.fillStyle = '#0a84ff'; c.font = '800 46px Heebo, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.direction = 'rtl';
     c.fillText('🔔 פעמון', w / 2, h / 2 + 3);
   }), transparent: true, depthWrite: false }));
   bellSign.scale.set(0.8, 0.3, 1); bellSign.position.set(0, BELL.top + 0.32, 0); bellRoot.add(bellSign);
@@ -1267,7 +1268,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     c.font = '800 50px Heebo, sans-serif'; c.direction = 'rtl'; c.textAlign = 'center'; c.textBaseline = 'middle';
     const t = ellipsize(c, text, W - 90), tw = Math.min(W - 16, c.measureText(t).width + 80);
     c.fillStyle = 'rgba(26,20,7,.92)'; rr(c, (W - tw) / 2, 10, tw, H - 30, 40); c.fill();
-    c.strokeStyle = color || '#f5b301'; c.lineWidth = 6; rr(c, (W - tw) / 2, 10, tw, H - 30, 40); c.stroke();
+    c.strokeStyle = color || '#0a84ff'; c.lineWidth = 6; rr(c, (W - tw) / 2, 10, tw, H - 30, 40); c.stroke();
     c.fillStyle = '#fff6e0'; c.fillText(t, W / 2, H / 2 - 4);
     bellCardTex.needsUpdate = true;
   }
@@ -1281,7 +1282,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     bell.vel += (reduced ? 0.9 : 3.2) * strength;
     bell.rings++;
     if (!reduced) for (const w of waves) if (w.userData.life <= 0) { w.userData.life = 1; w.visible = true; w.material.color.set(color || '#ffd36b'); break; }
-    burst(new THREE.Vector3(BELL.x, BELL.top - 0.25, BELL.z), color || '#f5b301', reduced ? 0 : 8);
+    burst(new THREE.Vector3(BELL.x, BELL.top - 0.25, BELL.z), color || '#0a84ff', reduced ? 0 : 8);
     hooks.onBellStrike?.(strength);
   }
   function updateBell(dt) {
@@ -1326,8 +1327,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   const TOD = {
     night:   { sun: 0.22, sunC: '#8fa6ff', hemi: 0.42, hemiS: '#7f8fc4', hemiG: '#2b2233', fill: 0.18, exp: 1.0,  sky: '#ffffff', night: 1,    lamps: 1,   shaft: 0 },
     dawn:    { sun: 1.5,  sunC: '#ffb489', hemi: 0.95, hemiS: '#ffd6bf', hemiG: '#7a5c5c', fill: 0.35, exp: 1.06, sky: '#ffb08a', night: 0.35, lamps: 0.55, shaft: 0.65 },
-    morning: { sun: 2.35, sunC: '#ffeccd', hemi: 1.15, hemiS: '#fff6e8', hemiG: '#9a7b5c', fill: 0.5,  exp: 1.12, sky: '#fff1df', night: 0,    lamps: 0.08, shaft: 1.1 },
-    day:     { sun: 2.6,  sunC: '#ffe2b8', hemi: 1.25, hemiS: '#fff3e0', hemiG: '#9a7b5c', fill: 0.55, exp: 1.14, sky: '#f2f2f2', night: 0,    lamps: 0,   shaft: 1 },
+    morning: { sun: 2.35, sunC: '#ffeccd', hemi: 1.45, hemiS: '#fffaf0', hemiG: '#c7b49c', fill: 0.62, exp: 1.16, sky: '#fff1df', night: 0,    lamps: 0.08, shaft: 1.1 },
+    day:     { sun: 2.6,  sunC: '#ffe2b8', hemi: 1.6, hemiS: '#fffaf0', hemiG: '#c7b49c', fill: 0.7, exp: 1.18, sky: '#f2f2f2', night: 0,    lamps: 0,   shaft: 1 },
     dusk:    { sun: 1.35, sunC: '#ff9152', hemi: 0.8,  hemiS: '#ffbf9e', hemiG: '#5e4250', fill: 0.3,  exp: 1.05, sky: '#ff9a74', night: 0.45, lamps: 0.75, shaft: 0.55 },
   };
   const TOD_STOPS = [[0, 'night'], [5.1, 'night'], [6.1, 'dawn'], [7.6, 'morning'], [10.5, 'day'], [16.3, 'day'], [17.7, 'dusk'], [18.9, 'night'], [24, 'night']];
@@ -1346,8 +1347,8 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
   }
   // interior lights for the evening (no shadows: cheap)
   const lampA = new THREE.PointLight(0xffc77a, 0, 11, 1.6); lampA.position.set(-1.8, 2.9, -0.4); scene.add(lampA);
-  const lampB = new THREE.PointLight(0xffc77a, 0, 11, 1.6); lampB.position.set(3.2, 2.9, 0.2); scene.add(lampB);
-  const lampC = new THREE.PointLight(0xffb866, 0, 7, 1.6); lampC.position.set(-HW + 0.8, 1.9, 4.7); scene.add(lampC);
+  const lampB = new THREE.PointLight(0xffc77a, 0, 14, 1.6); lampB.position.set(3.2, 3.2, 0.2); scene.add(lampB);
+  const lampC = new THREE.PointLight(0xffb866, 0, 7, 1.6); lampC.position.set(-HW + 0.8, 1.9, 5.8); scene.add(lampC);
   // a pendant lamp over each desk pod (dark by day, glowing at night)
   const pendants = [];
   for (const x of COLS) {
@@ -1741,7 +1742,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     }
     if (convo.cur) { if (convo.queue.length < 3) convo.queue.push(spec); return true; }
     const mx = present.reduce((s, ch) => s + ch.seat.x, 0) / present.length;
-    const center = new THREE.Vector3(Math.min(5.2, Math.max(-5.2, mx)), 0, TALK_Z);
+    const center = new THREE.Vector3(Math.min(7.4, Math.max(-7.4, mx)), 0, TALK_Z);
     const n = present.length, r = n === 2 ? 0.6 : 0.72;
     const c = { members: present, lines, idx: 0, nextAt: 0, phase: 'gather', center, agreed: !!spec.agreed, startT: clockT, endAt: 0 };
     convo.cur = c;
@@ -1869,11 +1870,12 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
       if (s.userData.life <= 0) s.visible = false;
     }
     hooks.onFrame?.(dt, t);
-    renderer.render(scene, cam);
+    if (!renderPaused) renderer.render(scene, cam);
     frames++;
   }
 
   const clock = new THREE.Clock();
+  let renderPaused = false; // the concept view hides the canvas: keep the simulation running, skip the draw calls
   function loop() {
     if (!running) return;
     requestAnimationFrame(loop);
@@ -2003,6 +2005,7 @@ export function createOffice(canvas, agentsMeta, hooks = {}, opts = {}) {
     focusShelf() { atHome = false; goal.az = BASE_AZ + 0.3; goal.el = 0.5; goal.t.set(shelfCx, 1.4, SHELF.z + 1); goal.zoom = Math.max(LIM.zMin, shelfTop + 0.9, (shelfW + 0.5) / aspect()); clampGoal(); },
     zoomBy(f) { const r = canvas.getBoundingClientRect(); zoomAt(f, r.left + r.width / 2, r.top + r.height / 2); },
     resetCam() { atHome = true; goal.az = BASE_AZ + Math.round((cur.az - BASE_AZ) / (Math.PI * 2)) * Math.PI * 2; goal.el = home.el; goal.zoom = home.zoom; goal.t.copy(home.t); for (const ch of agents.values()) ch.focused = false; },
+    setRenderPaused(v) { renderPaused = !!v; },
     updateScreen: drawWallScreen,
     updateBoard: drawBoard,
     updateShelves: buildShelves,
