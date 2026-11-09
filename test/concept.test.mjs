@@ -93,3 +93,7 @@ test('motion: the concept view is driven by the same calls as the 3D office (con
   for (const call of ['o.converse = spec =>', 'o.ringBell = (id, label) =>', 'o.coffeeBreak =', 'o.gatherAll =', 'o.disperseAll =', 'cv.setNight(info.night)']) assert.ok(main.includes(call), call);
   assert.match(main, /setRenderPaused\(/);
 });
+
+test('switching to live mode clears the demo conversation from the panel (live shows live data only)', () => {
+  assert.match(main, /if \(cvMode !== mode\) \{ if \(cvMode\) chatLog = mode === 'demo' \? demoChatSeed\(\) : \[\]; cvMode = mode; \}/);
+});

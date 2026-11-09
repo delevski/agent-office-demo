@@ -81,8 +81,14 @@ const CV_KEY = 'view';
 const wantCV = () => (QS.get('view') || LS.get(CV_KEY, 'room')) !== '3d';
 const isDesktop = () => matchMedia('(min-width:901px)').matches;
 function castNow() { return mode === 'live' ? LIVE : AGENTS; }
+let cvMode = '';
+function demoChatSeed() {
+  return [['gemino', 'נתוני ShortiGo מוכנים, העליתי את הדוח לתיקייה המשותפת'], ['hermessi', 'מעולה, מתחיל לארוז את ה-release'], ['deepsi', 'סיכום המתחרים עודכן, יש שני דברים לשים לב אליהם']]
+    .map(([id, text]) => ({ a: AGENTS.find(x => x.id === id), text })).filter(l => l.a);
+}
 function syncCast() {
   if (!cv) return;
+  if (cvMode !== mode) { if (cvMode) chatLog = mode === 'demo' ? demoChatSeed() : []; cvMode = mode; } // live mode never shows the demo conversation
   { const card = document.querySelector('.scene-card'); const n = parseFloat(card && card.style.getPropertyValue('--night')); if (!Number.isNaN(n)) cv.setNight(n); }
   cv.setCast(castNow());
   castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
@@ -163,8 +169,7 @@ function initConcept() {
   if (mode === 'demo' && !QS.get('quiet')) {
     const seed = [['gemino', 'PR #8 מוכן לסקירה, מי פנוי?', 600], ['claudi', 'אני על זה, שתי דקות', 1700]];
     seed.forEach(([id, text, at]) => setTimeout(() => { if (mode === 'demo') cv.say(id, text, 14000); }, at));
-    chatLog = [['gemino', 'נתוני ShortiGo מוכנים, העליתי את הדוח לתיקייה המשותפת'], ['hermessi', 'מעולה, מתחיל לארוז את ה-release'], ['deepsi', 'סיכום המתחרים עודכן, יש שני דברים לשים לב אליהם']]
-      .map(([id, text]) => ({ a: AGENTS.find(x => x.id === id), text })).filter(l => l.a);
+    chatLog = demoChatSeed();
     renderCPanel();
   }
   setInterval(renderCPanel, 30000);
