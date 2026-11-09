@@ -423,7 +423,7 @@ export function applyReport(prev, r, now = Date.now()) {
       if (!t.id) t.id = 't' + now.toString(36);
       a.current = { id: t.id, title: t.title, link: t.link, since: t.since };
       const previous = a.tasks.find(x => x.id === t.id);
-      upsertTask(a, { ...previous, ...t, status: 'running', ...(r.board ? { board: r.board, assigned: true, note: r.board.note } : {}) });
+      upsertTask(a, { ...previous, ...t, status: 'running', ...(r.note ? { note: r.note } : {}), ...(r.board ? { board: r.board, assigned: true, note: r.board.note } : {}) });
       a.status = 'working';
       break;
     }
@@ -433,7 +433,9 @@ export function applyReport(prev, r, now = Date.now()) {
       const status = TASK_STATUSES.includes(r.taskStatus) ? r.taskStatus : 'done';
       if (t) {
         const match = a.tasks.find(x => (t.id && x.id === t.id) || (!t.id && x.title === t.title));
-        upsertTask(a, { ...(match || {}), ...t, id: t.id || match?.id || 't' + now.toString(36), since: match?.since || t.since, status, ended: now, ...(r.board ? { board: r.board } : {}) });
+        // a done/failed report may carry a short "what was actually done" note: keep it on the
+        // task so the kanban card and panel show it instead of a bare title
+        upsertTask(a, { ...(match || {}), ...t, id: t.id || match?.id || 't' + now.toString(36), since: match?.since || t.since, status, ended: now, ...(r.note ? { note: r.note } : {}), ...(r.board ? { board: r.board } : {}) });
         if (a.current && ((t.id && a.current.id === t.id) || (!t.id && a.current.title === t.title))) a.current = null;
       }
       if (!a.current) a.status = r.status || 'idle';
