@@ -46,9 +46,23 @@ export class EventHub {
   }
 
   agentView(agent, now) {
-    const view = publicView(agent, now);
     // The durable inbox is not subject to the activity history's 15-card cap.
     const owned = this.board.filter(t => t.agent === agent.id);
+    // A generic idle heartbeat or a different task finishing cannot cancel an
+    // owner request. Only its claim-backed lifecycle can settle it.
+    const running = owned.filter(t => t.status === 'running').sort((a, b) => b.updated - a.updated);
+    const active = running.find(t => t.id === agent.current?.id) || running[0];
+    const effective = active ? { ...agent, status: 'working',
+      current: { id: active.id, title: active.title, link: active.link, since: active.created },
+      taskUpdated: active.updated } : agent;
+    const view = publicView(effective, now);
+    if (active) {
+      // Preserve lastSeen and stale evidence: working means an open claim,
+      // not a claim that the agent is still connected.
+      view.status = 'working';
+      view.presenceSource = 'board';
+      view.presenceStale = boardView(active, now).stale;
+    }
     view.tasks = [...owned.map(t => ({ id: t.id, title: t.title, status: t.status === 'queued' ? 'queued' : t.status,
       since: t.created, ended: ['done', 'failed'].includes(t.status) ? t.updated : undefined,
       link: t.link, assigned: true, note: t.note, board: boardView(t, now) })), ...view.tasks.filter(t => !owned.some(b => b.id === t.id))];
@@ -237,7 +251,7 @@ export class EventHub {
       }
       if (ev) this.broadcast({ type: 'event', event: ev });
       if (handoff) this.broadcast({ type: 'handoff', handoff });
-      if (receiver) this.broadcast({ type: 'agent', agent: publicView(receiver, now) });
+      if (receiver) this.broadcast({ type: 'agent', agent: this.agentView(receiver, now) });
       if (r.kind === 'review' && r.review) this.broadcast({ type: 'review', review: r.review });
       for (const c of newChanges) this.broadcast({ type: 'change', change: c });
       this.broadcast({ type: 'agent', agent: this.agentView(next, now) });

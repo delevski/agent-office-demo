@@ -134,3 +134,32 @@ test('board: concurrent duplicate create/claim never produces a second execution
   const claims = await Promise.all([call('/api/inbox/' + id + '/claim', {}, 't'), call('/api/inbox/' + id + '/claim', {}, 't')]);
   assert.deepEqual(claims.map(r => r.status).sort(), [200,409]);
 });
+
+test('presence: running owner claim survives idle, restart and another task completing; last settlement idles', async () => {
+  const { call, create, restart, data, sent } = await setup();
+  const first = (await json(await create('instinct'))).tasks[0];
+  const claim = await json(await call('/api/inbox/' + first.id + '/claim', {}, 'i'));
+  const view = async () => (await json(await call('/api/agents'))).agents.find(a => a.id === 'instinct');
+  assert.equal((await view()).status, 'working');
+  await call('/api/ingest', { agent: 'instinct', kind: 'heartbeat', status: 'idle' }, 'i');
+  assert.equal((await view()).status, 'working');
+  assert.equal((await view()).current.id, first.id);
+  assert.equal(sent.filter(x => x.type === 'agent').at(-1).agent.status, 'working');
+  const second = (await json(await create('instinct', '12345678-1234-1234-1234-123456789099'))).tasks[0];
+  const claim2 = await json(await call('/api/inbox/' + second.id + '/claim', {}, 'i'));
+  await call('/api/ingest', { agent: 'instinct', kind: 'task.done', task: { id: second.id }, note: 'done locally', claimToken: claim2.claimToken }, 'i');
+  assert.equal((await view()).status, 'working');
+  assert.equal((await view()).current.id, first.id);
+  // Even after an agent loses connectivity, retain the open claim and its age,
+  // never invent a fresh heartbeat. Durable tasks outlive the 15-card history.
+  const saved = data.get('agent:instinct'); saved.lastSeen = Date.now() - 86400_000; saved.tasks = [];
+  data.set('agent:instinct', saved);
+  const board = data.get('board:' + first.id); board.updated = Date.now() - 3600_000; data.set('board:' + first.id, board);
+  await restart();
+  assert.equal((await view()).status, 'working');
+  assert.equal((await view()).presenceStale, true);
+  assert.equal((await view()).lastSeen, saved.lastSeen);
+  await call('/api/ingest', { agent: 'instinct', kind: 'task.done', task: { id: first.id }, note: 'done locally', claimToken: claim.claimToken }, 'i');
+  assert.equal((await view()).status, 'idle');
+  assert.equal((await view()).current, null);
+});

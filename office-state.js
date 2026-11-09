@@ -502,7 +502,7 @@ export function applyReport(prev, r, now = Date.now()) {
   if (!a.current && a.status !== 'working') a.activity = null;
   // stuck detection: when did the open task last get an update?
   const currentNow = a.current?.id || a.current?.title || null;
-  if (currentNow && (currentNow !== currentBefore || (r.task && ['task.start', 'status', 'heartbeat'].includes(r.kind)))) a.taskUpdated = now;
+  if (currentNow && (currentNow !== currentBefore || (r.task && ['task.start', 'task.progress', 'status', 'heartbeat'].includes(r.kind)))) a.taskUpdated = now;
   if (!currentNow) a.taskUpdated = 0;
   // 7-day history: count every task that just became done/failed, on the day it ended
   a.daily = a.daily || {};

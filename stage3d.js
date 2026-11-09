@@ -10,6 +10,13 @@ import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { clone as skClone } from './vendor/SkeletonUtils.js';
 import { CALIB } from './concept-calib.js';
 
+// Time of day changes the room, not whether an active agent works.
+export function seatedOverlay(t) {
+  if (t.mode !== 'sit' || t.speaking) return null;
+  if (t.typing) return 'typing';
+  return t.night > 0.55 ? 'sleep' : null;
+}
+
 export const MODEL_URL = './assets/models/agent.glb';
 export const CLIPS = { idle: 'Idle_Loop', talk: 'Idle_Talking_Loop', walk: 'Walk_Loop', sitEnter: 'Sitting_Enter', sitExit: 'Sitting_Exit', sit: 'Sitting_Idle_Loop', sitTalk: 'Sitting_Talking_Loop' };
 const PANTS = ['#6f86a8', '#c9b79c', '#56627a', '#9aab94', '#b3a6c9', '#46526a'];
@@ -226,12 +233,12 @@ export function createStage(host, { maxDpr = 2 } = {}) {
       const sit = this.mode === 'sit';
       const q = new THREE.Quaternion(), e = new THREE.Euler();
       const twist = (name, x, y, z) => { const b = this.b[name]; if (!b || !this.rest[name]) return; e.set(x, y, z); q.setFromEuler(e); b.quaternion.copy(this.rest[name]).multiply(q); };
-      if (sit && t.night > 0.55) { // asleep: head down on the chest, arms still
+      if (seatedOverlay(t) === 'sleep') { // asleep: head down on the chest, arms still
         const k = this.nightT; const nod = Math.sin(time * 1.1 + this.timeOffset) * 0.015;
         const bq = this.b.neck_01; if (bq) { e.set(0.62 * k + nod, 0, 0.12 * k); q.setFromEuler(e); bq.quaternion.multiply(q); }
         const hq = this.b.Head; if (hq) { e.set(0.25 * k, 0, 0); q.setFromEuler(e); hq.quaternion.multiply(q); }
         const sp = this.b.spine_03; if (sp) { e.set(0.16 * k, 0, 0); q.setFromEuler(e); sp.quaternion.multiply(q); }
-      } else if (sit && t.typing && !t.speaking && this.curKey === 'sit') { // typing: both hands on the keyboard, fingers tapping
+      } else if (seatedOverlay(t) === 'typing' && this.curKey === 'sit') { // typing: both hands on the keyboard, fingers tapping
         this.root.updateMatrixWorld(true);
         const b = this.b, sd = CALIB.desks[this.seat], c = Math.cos(sd.yaw), s_ = Math.sin(sd.yaw);
         const sl = CALIB.seatLocal[this.seat], w = Math.min(1, this.sitT / 0.5);
