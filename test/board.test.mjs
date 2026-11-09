@@ -5,7 +5,7 @@ import { EventHub } from '../server/hub.js';
 import { makeSession } from '../server/auth.js';
 import { createBoardClient, slackTaskMessage } from '../integrations/board-agent.js';
 
-async function setup() {
+async function setup(extraEnv = {}) {
   const data = new Map(); const sent = [];
   const st = { storage: {
     async get(k) { return Array.isArray(k) ? new Map(k.filter(x => data.has(x)).map(x => [x, structuredClone(data.get(x))])) : structuredClone(data.get(k)); },
@@ -14,7 +14,7 @@ async function setup() {
     async list({ prefix }) { return new Map([...data].filter(([k]) => k.startsWith(prefix))); },
   }, blockConcurrencyWhile: fn => fn(), getWebSockets: () => [{ send: m => sent.push(JSON.parse(m)) }] };
   let hub = new EventHub(st); await new Promise(r => setTimeout(r, 0));
-  const env = { OFFICE_PASSWORD: 'test-only-password', AGENT_TOKEN_INSTINCT: 'i', AGENT_TOKEN_HERMES: 'h', AGENT_TOKEN_TAB: 't', INGEST_TOKEN: 'legacy',
+  const env = { OFFICE_PASSWORD: 'test-only-password', AGENT_TOKEN_INSTINCT: 'i', AGENT_TOKEN_HERMES: 'h', AGENT_TOKEN_TAB: 't', INGEST_TOKEN: 'legacy', ...extraEnv,
     HUB: { idFromName: () => '', get: () => ({ fetch: (url, init) => hub.fetch(new Request(url, init)) }) } };
   const cookie = 'ao_session=' + await makeSession(env);
   const call = async (path, body, auth = 'owner', headers = {}) => worker.fetch(new Request('https://office.test' + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', ...(auth === 'owner' ? { Cookie: cookie } : auth ? { Authorization: 'Bearer ' + auth } : {}), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), env);
@@ -162,4 +162,44 @@ test('presence: running owner claim survives idle, restart and another task comp
   await call('/api/ingest', { agent: 'instinct', kind: 'task.done', task: { id: first.id }, note: 'done locally', claimToken: claim.claimToken }, 'i');
   assert.equal((await view()).status, 'idle');
   assert.equal((await view()).current, null);
+});
+
+test('notify: new owner task for Instinct posts once to #agents, mentions only Instinct, stores receipt; others skip', async () => {
+  const { notifyInstinct } = await import('../server/notify.js');
+  const calls = [], deliveries = [];
+  const transport = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000100' }) }; };
+  const stub = { fetch: (u, i) => { deliveries.push(JSON.parse(i.body)); return new Response('{}'); } };
+  const env = { SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' };
+  const tasks = [{ id: 'board-a-instinct', agent: 'instinct', source: 'office-owner-session', status: 'queued', title: 'x <@everyone>', note: '' },
+    { id: 'board-a-tab', agent: 'tab', source: 'office-owner-session', status: 'queued', title: 'x', note: '' },
+    { id: 'board-b-instinct', agent: 'instinct', source: 'agent-report', status: 'queued', title: 'x', note: '' }];
+  const out = await notifyInstinct(env, tasks, stub, transport);
+  assert.equal(calls.length, 1); assert.equal(out.length, 1);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.channel, 'C0CFVFY4684'); assert.match(body.text, /^<@U0CDK0BDWQ2>/);
+  assert.ok(!body.text.includes('U0CELHLPWGL') && !body.text.includes('@everyone>')); assert.ok(!JSON.stringify(out).includes('xoxb'));
+  assert.deepEqual(deliveries, [{ id: 'board-a-instinct', delivery: 'delivered', slackTs: '1794300000.000100', note: '' }]);
+  assert.deepEqual(await notifyInstinct({}, tasks, stub, transport), { skipped: 'not configured' });
+  const failing = async () => ({ ok: true, status: 200, json: async () => ({ ok: false, error: 'not_in_channel' }) });
+  await notifyInstinct(env, tasks.slice(0, 1), stub, failing);
+  assert.equal(deliveries.at(-1).delivery, 'error'); assert.match(deliveries.at(-1).note, /not_in_channel/);
+});
+
+test('notify: route posts once on first creation only, never duplicate or non-owner; receipt stored; execution still needs claim', async () => {
+  const { call, create } = await setup({ SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' });
+  const sends = []; const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, i) => { sends.push({ u, body: JSON.parse(i.body) }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000200' }) }; };
+  try {
+    assert.equal((await call('/api/tasks', { agent: 'all', requestId: 'abcdefgh-1234-5678-9999', title: 'x' }, null)).status, 401);
+    assert.equal((await call('/api/tasks', { agent: 'all', requestId: 'abcdefgh-1234-5678-9999', title: 'x' }, 'i')).status, 401);
+    assert.equal(sends.length, 0);
+    const a = await json(await create('all'));
+    assert.equal(sends.length, 1); assert.equal(sends[0].u, 'https://slack.com/api/chat.postMessage'); assert.match(sends[0].body.text, /^<@U0CDK0BDWQ2>/);
+    await json(await create('all')); assert.equal(sends.length, 1);
+    await json(await create('tab', '99999999-1234-1234-1234-123456789012')); assert.equal(sends.length, 1);
+    const t = (await json(await call('/api/tasks'))).tasks.find(x => x.id === a.tasks[0].id);
+    assert.equal(t.delivery, 'delivered'); assert.equal(t.status, 'queued');
+    const c1 = await json(await call('/api/inbox/' + t.id + '/claim', {}, 'i'));
+    assert.equal((await call('/api/inbox/' + t.id + '/claim', {}, 'i')).status, 409); assert.ok(c1.claimToken);
+  } finally { globalThis.fetch = realFetch; }
 });
