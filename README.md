@@ -165,3 +165,7 @@ Requests authorize only their stated work. Payment, third-party communication, m
 Board requests are separate from the short activity history, so they remain visible beyond the old 15-card limit and survive restarts. Storage is bounded at 300 assignment records (all-three requests consume three). At capacity the server rejects new requests explicitly; it never drops unfinished work silently. An archive UI is a later extension.
 
 Run `npm test`. The board tests exercise the Worker auth boundary plus the Durable Object with in-memory storage and mock consumers, without real Slack sends or paid model calls.
+
+## Concept view (Apple v2)
+
+The default scene is the approved Apple concept room (`assets/office-room.jpg`) at the concept frame's exact layout: floating frosted top bar, left tool column, bottom dock, and the task board / review / chat panel open on the right (560 px). Everything that moves is live: the name pills, status dots, speech bubbles and bell come from the agents of the current mode (`roster.json` `agents` in demo, the live roster after login), seated by `concept.js` (`SLOTS`, up to 6 desks). The cube button in the tool column switches to the live three.js room (`?view=3d` also works); the 3D room keeps day/night, pajamas, bell and walking conversations.

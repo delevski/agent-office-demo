@@ -72,7 +72,7 @@ test('lighting: brighter daylight, light oak and white materials; day/night, bel
   for (const s of ['setPajamas(ch, wantPj)', 'function virtualNow()', "ch.action === 'bell'", 'function sayText']) assert.ok(office.includes(s), s);
 });
 
-test('roster data is untouched by the redesign: up to 6 agents with ids and names', () => {
+test('roster: up to 6 demo agents with ids and names (Ori\'s six), live roster unchanged', () => {
   const r = JSON.parse(read('roster.json'));
   assert.ok(r.agents.length >= 1 && r.agents.length <= 6);
   for (const a of r.agents) assert.ok(a.id && a.name && a.color);

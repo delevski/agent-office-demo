@@ -1,6 +1,7 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
 import { createOffice } from './office.js?v=25';
+import { createConcept } from './concept.js?v=1';
 import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
@@ -19,12 +20,12 @@ if (SHOWCASE) {
 
 /* ---------------- roster: data-driven, fetched from roster.json ---------------- */
 const FALLBACK_ROSTER = { agents: [
-  { id:'noa', name:'נועה', role:'סוכנת לידים', handle:'noa', color:'#7aa2f7', skin:'#f2c9a4', hair:'#5a3d28', longHair:true, kinds:[['lead.new','ליד חדש נכנס','+1'],['lead.qualified','ליד סומן כמתאים','+1']] },
-  { id:'maya', name:'מאיה', role:'סוכנת מכירות', handle:'maya', color:'#ef87a8', skin:'#e8b48c', hair:'#2c2320', longHair:true, kinds:[['quote.sent','הצעת מחיר נשלחה','#'],['deal.won','עסקה נסגרה!','₪']] },
-  { id:'itay', name:'איתי', role:'סוכן שירות', handle:'itay', color:'#57c98a', skin:'#f2c9a4', hair:'#3a2a1c', longHair:false, kinds:[['call.done','שיחת שירות הסתיימה','min'],['ticket.closed','פנייה נסגרה','#']] },
-  { id:'dani', name:'דני', role:'סוכן גבייה', handle:'dani', color:'#f2a65a', skin:'#d9a077', hair:'#1f1a16', longHair:false, kinds:[['payment.received','תשלום התקבל','₪'],['invoice.sent','חשבונית הופקה','#']] },
-  { id:'shira', name:'שירה', role:'סוכנת תוכן', handle:'shira', color:'#b085e8', skin:'#f2c9a4', hair:'#8a5a2b', longHair:true, kinds:[['post.draft','טיוטת פוסט מוכנה','+1'],['post.published','פוסט פורסם','+1']] },
-  { id:'omer', name:'עומר', role:'סוכן פרסום', handle:'omer', color:'#5ecfd6', skin:'#c98e63', hair:'#24201c', longHair:false, kinds:[['ad.report','דוח קמפיין נבנה','+1'],['campaign.tuned','קמפיין כוונן','CTR']] },
+  {"id": "hermessi", "name": "hermessi", "role": "סוכן שחרורים", "handle": "hermessi", "color": "#8b7cf6", "skin": "#f2c9a4", "hair": "#5a3d28", "longHair": true, "kinds": [["release.ready", "גרסה מוכנה לשחרור", "#"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "h", "icon": "wing"}, "skills": ["ארוז גרסאות", "הערות שחרור", "ניהול גרסאות", "פריסה"], "demoTasks": ["ShortiGo release", "PR #7 נמזג"], "demoBoard": {"doing": {"title": "ShortiGo release", "ago": 12}, "todo": [], "done": [{"title": "PR #7 נמזג", "at": "10:42"}], "rank": 1}, "slot": 3},
+  {"id": "claudi", "name": "Claudi", "role": "סוכנת סקירת קוד", "handle": "claudi", "color": "#e07a4f", "skin": "#e8b48c", "hair": "#2c2320", "longHair": true, "kinds": [["review.done", "סקירת קוד הושלמה", "+1"], ["pr.approved", "PR אושר", "#"]], "emblem": {"mono": "C", "icon": "spark"}, "skills": ["סקירת קוד", "בדיקות", "ארכיטקטורה", "תיעוד"], "demoTasks": ["PR #8 review"], "demoBoard": {"doing": {"title": "PR #8 review", "ago": 4}, "todo": [], "done": [], "rank": 0}, "slot": 1},
+  {"id": "gepeta", "name": "Gepeta", "role": "סוכנת תוכן", "handle": "gepeta", "color": "#4fb986", "skin": "#f2c9a4", "hair": "#3a2a1c", "longHair": false, "kinds": [["doc.draft", "טיוטה מוכנה", "+1"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "G", "icon": "pen"}, "skills": ["הערות שחרור", "מסמכי מוצר", "ניוזלטר", "תרגום"], "demoTasks": ["ShortiGo release notes"], "demoBoard": {"doing": null, "todo": [{"title": "ShortiGo release notes", "when": "מחר"}], "done": [], "rank": 1}, "slot": 2},
+  {"id": "grocki", "name": "Grocki", "role": "סוכן QA", "handle": "grocki", "color": "#ef6f9c", "skin": "#d9a077", "hair": "#1f1a16", "longHair": false, "kinds": [["test.passed", "בדיקות עברו", "#"], ["bug.found", "נמצא באג", "#"]], "emblem": {"mono": "Gr", "icon": "magnet"}, "skills": ["בדיקות מובייל", "רגרסיה", "דוחות באגים", "תשלומים"], "demoTasks": ["בדיקת דף תשלום במובייל"], "demoBoard": {"doing": null, "todo": [{"title": "בדיקת דף תשלום במובייל", "when": "היום"}], "done": [], "rank": 0}, "slot": 4},
+  {"id": "gemino", "name": "Gemino", "role": "סוכן נתונים", "handle": "gemino", "color": "#4aa3ee", "skin": "#f2c9a4", "hair": "#8a5a2b", "longHair": true, "kinds": [["report.built", "דוח נבנה", "+1"], ["task.done", "משימה הושלמה", "+1"]], "emblem": {"mono": "Gm", "icon": "chat"}, "skills": ["דוחות", "ניתוח נתונים", "קמפיינים", "לוחות מחוונים"], "demoTasks": ["תיקון הפניה אחרי כניסה", "דוח קמפיין שבועי"], "demoBoard": {"doing": {"title": "תיקון הפניה אחרי כניסה", "ago": 25}, "todo": [], "done": [{"title": "דוח קמפיין שבועי", "at": "09:58"}], "rank": 2}, "slot": 0},
+  {"id": "deepsi", "name": "Deepsi", "role": "סוכנת מחקר", "handle": "deepsi", "color": "#2cc0c0", "skin": "#c98e63", "hair": "#24201c", "longHair": false, "kinds": [["research.done", "סיכום מחקר מוכן", "+1"], ["doc.updated", "מסמך עודכן", "#"]], "emblem": {"mono": "D", "icon": "coin"}, "skills": ["מחקר מתחרים", "סיכומים", "מדריך API", "מקורות"], "demoTasks": ["עדכון מדריך ה-API", "מחקר מתחרים · סיכום"], "demoBoard": {"doing": null, "todo": [{"title": "עדכון מדריך ה-API", "when": "יום ד׳"}], "done": [{"title": "מחקר מתחרים · סיכום", "at": "09:15"}], "rank": 2}, "slot": 5}
 ]};
 
 let AGENTS = [];          // demo characters (roster.json "agents")
@@ -73,6 +74,127 @@ async function loadRoster() {
   }
 }
 
+
+/* ---------------- concept view: the approved room picture + live pills, bubbles and the right-hand panel ---------------- */
+let cv = null, chatLog = [];
+const CV_KEY = 'view';
+const wantCV = () => (QS.get('view') || LS.get(CV_KEY, 'room')) !== '3d';
+const isDesktop = () => matchMedia('(min-width:901px)').matches;
+function castNow() { return mode === 'live' ? LIVE : AGENTS; }
+function syncCast() {
+  if (!cv) return;
+  cv.setCast(castNow());
+  castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
+  renderCPanel();
+}
+function setView(room) {
+  document.body.classList.toggle('cvx', room);
+  $('#btn-view3d')?.setAttribute('aria-pressed', room ? 'false' : 'true');
+  LS.set(CV_KEY, room ? 'room' : '3d');
+  if (room) { drawerOpen = false; applyDrawer(false); } else { drawerOpen = isDesktop(); applyDrawer(false); }
+  requestAnimationFrame(() => cv?.place());
+}
+function cpOpen(open) {
+  document.body.classList.toggle('cp-closed', !open);
+  $('#btn-board')?.classList.toggle('on', open);
+  LS.set('cpanel', open ? '1' : '0');
+}
+function relMin(ts) {
+  if (!ts) return 'עכשיו';
+  const mn = Math.max(0, Math.round((nowRef() - ts) / 60000));
+  if (mn < 1) return 'עכשיו';
+  return mn < 60 ? `לפני ${mn} דק׳` : when(ts);
+}
+function chip(a) { return `<span class="pchip"><i style="background:${esc(a.color)}"></i>${esc(a.name)}</span>`; }
+function renderCPanel() {
+  const root = $('#cpanel'); if (!root || !cv) return;
+  const bd = boardData();
+  const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
+  const total = bd.columns.todo.length + bd.columns.doing.length + bd.columns.done.length;
+  $('#cp-sub').textContent = `${castNow().length} סוכנים · ${total} משימות`;
+  $('#cp-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
+    const list = bd.columns[k].slice(0, k === 'done' ? 4 : 5);
+    const label = c => k === 'doing' ? relMin(c.since || c.ts) : (c.when || (k === 'done' ? when(c.ts) : ''));
+    return `<div class="kcol k-${k}"><div class="khead"><span class="kdot"></span>${names[k]}<span class="kcount">${bd.columns[k].length}</span></div>`
+      + (list.length ? list.map(c => `<div class="kcard"><div class="kt">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div><div class="km">${chip(c.agent)}<span class="when">${esc(label(c))}</span></div></div>`).join('')
+        : `<div class="kempty">${esc(bd.empty?.[k] || '—')}</div>`) + '</div>';
+  }).join('');
+  // last code review
+  let rv = '';
+  if (mode === 'live') {
+    const r = reviews[reviews.length - 1];
+    if (r) {
+      const who = agentMeta(r.reviewer_agent), [vt] = VERDICT_HE[r.verdict] || [''];
+      const n = (r.findings || []).length;
+      rv = `${chip(who)} סקר/ה את <b>PR #${esc(r.pr)}</b> · ${n} הערות<span class="badge-ok${r.verdict === 'approved' ? '' : ' chg'}">${ic(r.verdict === 'approved' ? 'circle-check' : 'refresh-cw', 'inline')}${esc(vt)}</span>`;
+    } else rv = '<span class="muted">עוד אין ביקורות קוד</span>';
+  } else {
+    const a = AGENTS.find(x => x.id === 'claudi') || AGENTS[0];
+    if (a) rv = `${chip(a)} סקרה את <b>PR #8</b> · 2 הערות, מאושר בכפוף לתיקון<span class="badge-ok">${ic('circle-check', 'inline')}אושר</span>`;
+  }
+  $('#cp-review').innerHTML = rv;
+  const lines = chatLog.slice(-3);
+  $('#cp-chat').innerHTML = lines.length ? lines.map(l => `<div class="cm">${chip(l.a)}<span class="cb">${esc(l.text)}</span></div>`).join('') : '<div class="muted">כשסוכנים ידברו, השיחה תופיע כאן</div>';
+}
+let cvQueue = Promise.resolve();
+function cvSpeak(spec) {
+  if (!cv || !spec) return;
+  const lines = (spec.lines || []).filter(l => l && l.text);
+  let t = 1100;
+  lines.forEach(l => {
+    const a = castNow().find(x => x.id === l.agent); if (!a) return;
+    setTimeout(() => { cv.say(a.id, l.text, 3800); chatLog.push({ a, text: l.text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel(); }, t);
+    t += 3000;
+  });
+}
+function initConcept() {
+  cv = createConcept($('#cv'), { esc });
+  // keep the live scene's logic in charge; mirror it onto the picture
+  const o = office, _converse = o.converse.bind(o), _setStatus = o.setStatus.bind(o), _ring = o.ringBell.bind(o), _celebrate = o.celebrate.bind(o);
+  o.converse = spec => { const ok = _converse(spec); if (ok) cvSpeak(spec); return ok; };
+  o.setStatus = (id, st) => { cv.setStatus(id, st); return _setStatus(id, st); };
+  o.ringBell = (id, label) => { cv.ring(id); const a = castNow().find(x => x.id === id); if (a && label) cv.say(id, label, 3200); return _ring(id, label); };
+  o.celebrate = id => { cv.ring(id); return _celebrate(id); };
+  document.body.classList.toggle('cvx', wantCV());
+  $('#btn-view3d')?.setAttribute('aria-pressed', wantCV() ? 'false' : 'true');
+  cpOpen(isDesktop() && LS.get('cpanel', '1') !== '0');
+  if (wantCV()) { drawerOpen = false; applyDrawer(false); }
+  syncCast();
+  // the first screen is a believable moment in the day (demo only)
+  if (mode === 'demo' && !QS.get('quiet')) {
+    const seed = [['gemino', 'PR #8 מוכן לסקירה, מי פנוי?', 600], ['claudi', 'אני על זה, שתי דקות', 1700]];
+    seed.forEach(([id, text, at]) => setTimeout(() => { if (mode === 'demo') cv.say(id, text, 14000); }, at));
+    chatLog = [['gemino', 'נתוני ShortiGo מוכנים, העליתי את הדוח לתיקייה המשותפת'], ['hermessi', 'מעולה, מתחיל לארוז את ה-release'], ['deepsi', 'סיכום המתחרים עודכן, יש שני דברים לשים לב אליהם']]
+      .map(([id, text]) => ({ a: AGENTS.find(x => x.id === id), text })).filter(l => l.a);
+    renderCPanel();
+  }
+  setInterval(renderCPanel, 30000);
+  // controls
+  $('#cp-close').addEventListener('click', () => cpOpen(false));
+  $('#cp-add').addEventListener('click', () => { if (mode === 'live') $('#btn-assign')?.click(); else { openAssignDemo(); } });
+  $('#btn-view3d').addEventListener('click', () => setView(!document.body.classList.contains('cvx')));
+  $('#btn-agents').addEventListener('click', () => { drawerOpen = !drawerOpen; LS.set('drawer', drawerOpen ? '1' : '0'); applyDrawer(); });
+  // zoom / reset act on the picture while it is the scene (captured before the 3D handlers)
+  const cvOnly = fn => e => { if (!document.body.classList.contains('cvx')) return; e.stopImmediatePropagation(); e.preventDefault(); fn(e); };
+  $('#btn-zoomin').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() * 1.25)), true);
+  $('#btn-zoomout').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() / 1.25)), true);
+  $('#btn-resetcam').addEventListener('click', cvOnly(() => { cv.setPan(0); cv.setZoom(1); }), true);
+  $('#btn-rotl')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() + 0.06)), true);
+  $('#btn-rotr')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() - 0.06)), true);
+  $('#btn-board').addEventListener('click', e => {
+    if (!document.body.classList.contains('cvx') || !isDesktop()) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    cpOpen(document.body.classList.contains('cp-closed'));
+  }, true);
+  const demoGate = id => $(id)?.addEventListener('click', e => {
+    if (mode === 'live' || !document.body.classList.contains('cvx')) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    toast('זמין במצב חי אחרי כניסה');
+  }, true);
+  demoGate('#btn-replay');
+}
+function openAssignDemo() { toast('משימות חדשות נשלחות במצב חי, אחרי כניסה'); }
+
 async function boot() {
   $('#boot-error').classList.add('hidden');
   try {
@@ -94,9 +216,11 @@ async function boot() {
       onTimeOfDay: onTimeOfDay,
     }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12, time: QS.get('time') || '' });
     window.__office = office;
+    initConcept();
     applyDrawer(false);
     if (!SHOWCASE) (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
     initDemoBoard();
+    syncCast();
     bootSet(85, 'בודק כניסה…');
     if (!SHOWCASE) await checkAuth();
     bootSet(100, 'מוכן!');
@@ -163,6 +287,7 @@ function showCast() {
   LIVE.forEach(a => office.setVisible(a.id, mode === 'live'));
   document.body.classList.toggle('is-live', mode === 'live');
   $('#badge-mode').textContent = mode === 'live' ? 'חי' : 'דמו';
+  syncCast();
   $('#chart-sub').textContent = '30 הדקות האחרונות · ' + (mode === 'live' ? 'חי' : 'דמו');
   $('#log-sub').textContent = mode === 'live' ? 'אירועים אמיתיים שהסוכנים מדווחים' : 'טבלת דמו · כל שורה מזיזה דמות';
   $('#foot-demo').classList.toggle('hidden', mode === 'live');
@@ -213,10 +338,10 @@ $('#live-pill').addEventListener('click', () => {
 
 /* ---------------- KPIs ---------------- */
 const kpis = {
-  leads:   { label: 'לידים היום',   v: 0, money: false },
-  quotes:  { label: 'הצעות מחיר',   v: 0, money: false },
-  calls:   { label: 'שיחות שירות',  v: 0, money: false },
-  revenue: { label: 'הכנסות (דמו)', v: 0, money: true  },
+  leads:   { label: 'משימות שהושלמו', v: 0, money: false },
+  quotes:  { label: 'סקירות ובדיקות', v: 0, money: false },
+  calls:   { label: 'שחרורים ופריסות', v: 0, money: false },
+  revenue: { label: 'באגים שנמצאו', v: 0, money: false },
 };
 function liveKpis() {
   const views = LIVE.map(a => liveState.get(a.id)).filter(Boolean);
@@ -250,11 +375,10 @@ function bumpKpi(k, amount) {
   const el = $('#kpi-' + k); if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
 }
 function bumpKpisForKind(kind, val) {
-  const n = parseInt(String(val).replace(/[^\d]/g, ''), 10) || 0;
-  if (/^lead/.test(kind)) bumpKpi('leads', 1);
-  else if (/^(quote|deal)/.test(kind)) { bumpKpi('quotes', 1); if (/deal/.test(kind) && n) bumpKpi('revenue', n); }
-  else if (/^(call|ticket|support)/.test(kind)) bumpKpi('calls', 1);
-  else if (/^(payment|invoice|charge)/.test(kind) && n) bumpKpi('revenue', n);
+  if (/^(task|doc|report|research|lead)/.test(kind)) bumpKpi('leads', 1);
+  else if (/^(review|pr|test|quote|deal)/.test(kind)) bumpKpi('quotes', 1);
+  else if (/^(release|deploy|call|ticket|support)/.test(kind)) bumpKpi('calls', 1);
+  else if (/^(bug|payment|invoice|charge)/.test(kind)) bumpKpi('revenue', 1);
 }
 renderKpis();
 
@@ -503,6 +627,7 @@ function addLiveCharacter(meta) {
   office.setStatus(meta.id, sceneStatus(liveState.get(meta.id)));
   office.setVisible(meta.id, mode === 'live');
   statOf(meta.id);
+  syncCast();
   return meta;
 }
 function createLiveAgent(handle, name) {
@@ -1086,6 +1211,7 @@ function renderAuthButton() {
   const b = $('#btn-login');
   b.innerHTML = auth.loggedIn ? `${ic('lock-open')}<span class="lbl">יציאה</span>` : `${ic('lock')}<span class="lbl">כניסה</span>`;
   b.setAttribute('aria-label', auth.loggedIn ? 'יציאה מהמשרד החי' : 'כניסה למשרד החי');
+  document.body.classList.toggle('authed', !!auth.loggedIn);
 }
 function openLogin() {
   $('#login-err').classList.add('hidden');
@@ -1251,6 +1377,19 @@ function initDemoBoard() {
   AGENTS.forEach((a, i) => {
     const t = (a.demoTasks || []).slice();
     if (!t.length) return;
+    const sb = a.demoBoard; // optional seeded board (titles + labels) so the first screen is a realistic day
+    if (sb) {
+      demoBoard.set(a.id, {
+        doing: sb.doing ? sb.doing.title : null,
+        doingSince: sb.doing ? now - (sb.doing.ago || 3) * 60_000 : 0,
+        todo: (sb.todo || []).map(x => x.title),
+        rank: sb.rank ?? 9,
+        todoWhen: Object.fromEntries((sb.todo || []).map(x => [x.title, x.when || ''])),
+        done: (sb.done || []).map((d, k) => ({ title: d.title, ended: now - (k + 1 + i) * 9 * 60_000, at: d.at })),
+      });
+      // a spare pool for the simulation to recycle
+      return;
+    }
     demoBoard.set(a.id, {
       doing: t[0] || null,
       todo: t.slice(1, i % 2 ? 3 : 2),
@@ -1262,7 +1401,7 @@ function demoTaskStep(a, kind) {
   const b = demoBoard.get(a.id); if (!b || Math.random() > 0.42) return;
   if (b.doing) { b.done.unshift({ title: b.doing, ended: Date.now() }); b.done.length = Math.min(b.done.length, 4); }
   const pool = (a.demoTasks || []);
-  b.doing = b.todo.shift() || null;
+  b.doing = b.todo.shift() || null; b.doingSince = Date.now();
   if (b.todo.length < 2) { // recycle a finished sample task back into the queue
     const recycled = pool.find(t => t !== b.doing && !b.todo.includes(t));
     if (recycled) b.todo.push(recycled);
@@ -1273,10 +1412,11 @@ function boardData() {
     const cols = { todo: [], doing: [], done: [] };
     for (const a of AGENTS) {
       const b = demoBoard.get(a.id); if (!b) continue;
-      b.todo.forEach(title => cols.todo.push({ title, agent: a, status: 'queued' }));
-      if (b.doing) cols.doing.push({ title: b.doing, agent: a, status: 'running', when: 'עכשיו' });
-      b.done.forEach(d => cols.done.push({ title: d.title, agent: a, status: 'done', ts: d.ended, when: when(d.ended) }));
+      b.todo.forEach(title => cols.todo.push({ title, agent: a, status: 'queued', when: b.todoWhen?.[title] || '', rank: b.rank ?? 9 }));
+      if (b.doing) cols.doing.push({ title: b.doing, agent: a, status: 'running', since: b.doingSince || 0, when: 'עכשיו', rank: b.rank ?? 9 });
+      b.done.forEach(d => cols.done.push({ title: d.title, agent: a, status: 'done', ts: d.ended, when: d.at || when(d.ended) }));
     }
+    cols.todo.sort((x, y) => x.rank - y.rank); cols.doing.sort((x, y) => x.rank - y.rank);
     cols.done.sort((x, y) => y.ts - x.ts);
     return { demo: true, columns: cols, updated: Date.now() };
   }
@@ -1526,7 +1666,7 @@ function renderStrip() {
     // live: the same numbers as the KPI cards (connected · tasks today); demo: leads + revenue
     const k = mode === 'live' ? Object.fromEntries(liveKpis().map(([id, , v]) => [id, v])) : null;
     const s1 = k ? [k.online, 'מחוברים'] : [`${working}/${list.length}`, 'עובדים'];
-    const s2 = k ? [k.tasks, 'משימות'] : [String(kpis.leads.v), 'לידים'];
+    const s2 = k ? [k.tasks, 'משימות'] : [String(kpis.leads.v), 'הושלמו'];
     el.innerHTML = list.map(a => {
       const st = stripStatus(a), ini = esc((a.emblem?.mono || a.name || a.id).slice(0, 2));
       return `<button class="st-ag${st.alert ? ' alert' : ''}" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)};--sd:${STRIP_DOT[st.s] || '#8b8577'}" title="${esc(a.name)} · ${esc(st.label)}" aria-label="${esc(a.name)}: ${esc(st.label)}">${ini}<span class="st-dot"></span></button>`;
@@ -1559,12 +1699,12 @@ function onTimeOfDay(info) {
 
 /* ---- conversations: demo scripts (demo mode) and quiet emoji small talk (live mode, no invented facts) ---- */
 const DEMO_CHATS = [
-  { lines: ['הליד מאתמול חזר אליי', 'מעולה, אני מכינה הצעת מחיר', 'שולחת לך את הפרטים עכשיו'], agreed: true },
-  { lines: ['מי לוקח את הלקוח מחיפה?', 'אני, יש לי חלון ב-14:00', 'סגור, רושמת ביומן'], agreed: true },
-  { lines: ['ראית את הדוח השבועי?', 'כן, המספרים עלו 12% 🚀'], agreed: false },
-  { lines: ['צריך לעדכן את תבנית המייל', 'אני על זה אחרי הצהריים', 'תודה! תעדכן כשמוכן'], agreed: true },
+  { lines: ['ה-PR מוכן לסקירה, מי פנוי?', 'אני על זה, שתי דקות', 'תודה, אשחרר אחרי האישור'], agreed: true },
+  { lines: ['נתוני ShortiGo מוכנים', 'מעולה, מתחיל לארוז את ה-release', 'מעדכן את הערות השחרור'], agreed: true },
+  { lines: ['הבדיקה במובייל נכשלה בדף התשלום', 'שולח לך צילום מסך', 'קיבלתי, מתקן עכשיו'], agreed: true },
+  { lines: ['ראית את דוח הקמפיין השבועי?', 'כן, המספרים עלו 12% 🚀'], agreed: false },
+  { lines: ['סיכום המתחרים עודכן', 'יש משהו שדורש תשומת לב?', 'שני דברים, אשלח לך'], agreed: true },
   { lines: ['קפה?', 'תמיד ☕'], agreed: false },
-  { lines: ['הלקוח ביקש דמו ביום חמישי', 'אני מכין מצגת', 'ואני דואגת לחדר ישיבות'], agreed: true },
 ];
 const LIVE_SMALLTALK = [['☕?', '👍'], ['👋', '🙂'], ['🚀', '🔥'], ['💡', '👀'], ['🙌', '😄']];
 const life = { on: LS.get('life', '1') !== '0', nextChat: 22, nextLive: 0, t: 0, lastChat: 0 };
