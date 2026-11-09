@@ -5,7 +5,7 @@
 // day). Name pills and speech bubbles follow the people and come from data: demo roster in demo mode, the live
 // roster after login. Movement is planned on the painted floor (picture fractions); stage3d turns it into
 // skeletal animation at the matching spot of the real 3D floor.
-import { createStage } from './stage3d.js?v=1';
+import { createStage } from './stage3d.js?v=2';
 import { CALIB } from './concept-calib.js';
 
 export const ROOM_DAY = './assets/office-room-day.jpg';
@@ -150,7 +150,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
       if (ac.hop > 0) ac.hop = Math.max(0, ac.hop - dt / 0.7);
       const st = status.get(ac.id), spk = (speakUntil.get(ac.id) || 0) > now;
       poses.set(ac.id, { fx: ac.x, fy: ac.y, mode: ac.state === 'sit' ? 'sit' : ac.state === 'exit' ? 'exit' : ac.state === 'walk' ? 'walk' : 'stand',
-        dirX: ac.dir?.x, dirY: ac.dir?.y, lookX: ac.look?.x, lookY: ac.look?.y, speaking: spk, night, typing: st !== 'idle' && st !== 'offline', hop: ac.hop });
+        dirX: ac.dir?.x, dirY: ac.dir?.y, lookX: ac.look?.x, lookY: ac.look?.y, speaking: spk, night, typing: st === 'working' || st === 'typing', hop: ac.hop });
     }
     if (stage) { stage.resize(box); stage.frame(dt, poses, night, now / 1000); }
     for (const ac of actors.values()) pillFor(ac);
