@@ -67,6 +67,12 @@ Key design decisions:
 - **Private by default.** Live data needs a password login (signed HttpOnly cookie, login rate-limited per IP). The public `/showcase` route renders demo mode only and never calls the private API.
 - **No build, no assets.** All 3D geometry is generated in code with vendored Three.js; static furniture is merged per material, pixel ratio and shadows drop automatically on slow phones, and the render loop pauses in background tabs. `prefers-reduced-motion` is respected.
 
+### Design (Apple-style redesign)
+
+- **Chrome.** A floating frosted-white pill on top (brand, clock, meeting/pause/speed, sound, notifications, login) and a frosted dock at the bottom (actions, task board, skills shelf, reviews, replay). Thin Lucide outline icons from one inline SVG sprite in `index.html` (`<svg class="ico"><use href="#i-bell"/></svg>`; `main.js` has `ic('bell')` for templates), no emoji as icons. One blue accent (`--accent: #007aff`), rounded white sheets for the drawer, task board, reviews and chat panels, system font stack (SF on Apple devices, Heebo as the Hebrew fallback), soft shadows, RTL first.
+- **Room.** 19 x 14.4 floor (was 15 x 11), three large windows, desks 5.6 apart in columns and 4.9 apart in rows (6 desks, 3 x 2), bell / lounge / coffee corner moved out to match. The home camera frames the whole room on desktop and phone. Brighter daylight (hemisphere + sun + fill), light oak floor and desks, white walls.
+- Day/night cycle, bell, conversation bubbles, pajamas and every control keep working. `roster.json` is untouched.
+
 ### Main endpoints
 
 | Method & path | Auth | Purpose |

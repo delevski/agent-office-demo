@@ -1,6 +1,6 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=24';
+import { createOffice } from './office.js?v=25';
 import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
@@ -113,10 +113,13 @@ async function boot() {
 $('#boot-retry').addEventListener('click', boot);
 
 /* ---------------- busy wrapper + toasts ---------------- */
-function toast(msg, { err = false, retry = null } = {}) {
+/** Lucide icon from the inline sprite in index.html (thin outline, currentColor). */
+const ic = (name, cls = '') => `<svg class="ico${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+function toast(msg, { err = false, retry = null, icon = '' } = {}) {
   if (SHOWCASE) return;
   const el = document.createElement('div');
   el.className = 'toast' + (err ? ' err' : '');
+  if (icon || err) el.insertAdjacentHTML('beforeend', ic(icon || 'triangle-alert', 'toast-ico'));
   const span = document.createElement('span'); span.textContent = msg;
   el.appendChild(span);
   if (retry) {
@@ -191,7 +194,7 @@ function enterLiveMode({ quiet = false } = {}) {
   loadReviews(); loadChanges();
   connectLive();
   refreshWorld(true);
-  if (!quiet) toast('⚡ מצב חי — הסוכנים האמיתיים שלך');
+  if (!quiet) toast('מצב חי — הסוכנים האמיתיים שלך', { icon: 'zap' });
 }
 function enterDemoMode() {
   mode = 'demo';
@@ -287,7 +290,7 @@ function panelHtml(a) {
     <div class="ap-status"><span class="dot" style="background:${a.color}"></span><span>${STATE_HE[st.state] || st.state}</span></div>
     <div class="ap-row"><span>פעולה אחרונה</span><span class="muted">${st.last}</span></div>
     <div class="ap-row"><span>אירועים היום</span><span class="mono">${st.events}</span></div>
-    <div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">🎯 מיקוד במשרד</button></div>`;
+    <div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">${ic('crosshair')}<span class="lbl">מיקוד במשרד</span></button></div>`;
 }
 function renderPanel(a) {
   const isMobile = window.innerWidth <= 900;
@@ -328,7 +331,7 @@ function renderPanelDefault() {
       const st = statOf(a.id);
       return `<div class="ag-item" data-id="${a.id}">
         <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
-        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ⚡' : ''}</span></div>
+        <div class="grow"><div style="font-weight:800;font-size:.88rem">${a.name} · <span class="muted">${a.role}${a.live ? ' ' + ic('zap', 'inline') : ''}</span></div>
         <div class="ag-last">${st.last}</div></div>
         <span class="mono muted">${st.events}</span>
       </div>`;
@@ -361,14 +364,14 @@ function drawChart() {
   const c = cv.getContext('2d');
   c.clearRect(0, 0, W, H);
   const max = Math.max(4, ...chartData);
-  c.strokeStyle = '#f5b301'; c.lineWidth = 2 * dpr; c.beginPath();
+  c.strokeStyle = '#007aff'; c.lineWidth = 2 * dpr; c.beginPath();
   chartData.forEach((v, i) => {
     const x = W - (i + 0.5) / chartData.length * W;
     const y = H - 6 * dpr - (v / max) * (H - 16 * dpr);
     i ? c.lineTo(x, y) : c.moveTo(x, y);
   });
   c.stroke();
-  c.fillStyle = '#f5b30122';
+  c.fillStyle = '#007aff33';
   chartData.forEach((v, i) => {
     const x = W - (i + 0.5) / chartData.length * W;
     const y = H - 6 * dpr - (v / max) * (H - 16 * dpr);
@@ -517,13 +520,13 @@ function createLiveAgent(handle, name) {
     live: true,
     kinds: [],
   });
-  if (mode === 'live') { renderPanelDefault(); toast(`⚡ סוכן חדש עלה למשרד: ${meta.name}`); }
+  if (mode === 'live') { renderPanelDefault(); toast(`סוכן חדש עלה למשרד: ${meta.name}`, { icon: 'zap' }); }
   return meta;
 }
 
 /* ---------------- live agent panel ---------------- */
 const STATUS_HE = { working: 'עובד עכשיו', idle: 'פנוי', blocked: 'תקוע · ממתין', offline: 'לא מחובר' };
-const TASK_ICON = { running: '⏳', done: '✅', failed: '❌', blocked: '⛔', queued: '🗂️', handed: '↪️' };
+const TASK_ICON = { running: ic('loader-circle', 't-run'), done: ic('circle-check', 't-ok'), failed: ic('circle-x', 't-bad'), blocked: ic('octagon-alert', 't-warn'), queued: ic('inbox', 't-q'), handed: ic('corner-up-right', 't-q') };
 const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור', handed: 'הועבר' };
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -565,8 +568,8 @@ function liveListItem(a) {
     <span class="ap-emblem sm">${emblemSVG(a, 36)}</span>
     <div class="grow"><div style="font-weight:800;font-size:.88rem">${esc(a.name)} · <span class="muted">${esc(a.role)}</span></div>
     <div class="ag-last">${esc(line)}</div></div>
-    ${mt ? `<span class="mt-chip mt-${mt.level}" title="${esc(meterText(mt))}">💸 ${Math.round(mt.pct)}%</span>` : ''}
-    ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">⚠ ${esc(alertLabel(al))}</span>`
+    ${mt ? `<span class="mt-chip mt-${mt.level}" title="${esc(meterText(mt))}">${ic('wallet', 'inline')} ${Math.round(mt.pct)}%</span>` : ''}
+    ${al ? `<span class="st-chip st-alert" title="${esc(alertTitle(al))}">${ic('triangle-alert', 'inline')} ${esc(alertLabel(al))}</span>`
       : `<span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>`}
   </div>`;
 }
@@ -583,7 +586,7 @@ function livePanelHtml(a) {
       <div class="grow"><div class="ap-name">${esc(a.name)}</div><div class="ap-role">${esc(a.role)} · חי</div></div>
       <span class="st-chip st-${st}"><span class="dot"></span>${st === 'nodata' ? 'אין נתונים' : STATUS_HE[st]}</span>
     </div>`;
-  const focus = `<div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">🎯 מיקוד במשרד</button></div>`;
+  const focus = `<div class="ap-actions"><button class="btn btn-gold" id="ap-focus" type="button">${ic('crosshair')}<span class="lbl">מיקוד במשרד</span></button></div>`;
   if (st === 'nodata') {
     return head + `<div class="ap-nodata"><b>אין נתונים עדיין.</b> ${esc(a.name)} עוד לא דיווח למשרד. ברגע שיגיע הדיווח הראשון יופיעו כאן העבודה הנוכחית, המשימות, השימוש והיכולות שלו.</div>` + focus;
   }
@@ -620,7 +623,7 @@ function livePanelHtml(a) {
        ${c.tools?.length ? `<div class="ap-sub">כלים <span class="muted">(${c.tools.length})</span></div><div class="chips chips-tools">${chips(c.tools)}</div>` : ''}`
     : `<div class="ap-empty-line">הסוכן עוד לא דיווח על היכולות שלו</div>`;
   const al = alertOf(v);
-  const alertHtml = al ? `<div class="al-card" role="alert"><b>⚠ ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}</b> <span>${esc(alertTitle(al))}</span></div>` : '';
+  const alertHtml = al ? `<div class="al-card" role="alert"><b>${ic('triangle-alert', 'inline')} ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}</b> <span>${esc(alertTitle(al))}</span></div>` : '';
   return head + alertHtml + `
     <div class="ap-seen muted">דיווח אחרון ${ago(v.lastSeen)}</div>
     <section class="ap-sec"><h4>עובד עכשיו על</h4>${currentHtml}</section>
@@ -649,7 +652,7 @@ function alertBannerHtml() {
   const list = liveAlerts();
   if (!list.length) return '';
   return `<div class="al-banner" role="alert">
-    <div class="al-title">⚠ ${list.length === 1 ? 'סוכן אחד דורש תשומת לב' : `${list.length} סוכנים דורשים תשומת לב`}</div>
+    <div class="al-title">${ic('triangle-alert', 'inline')} ${list.length === 1 ? 'סוכן אחד דורש תשומת לב' : `${list.length} סוכנים דורשים תשומת לב`}</div>
     ${list.map(({ a, al }) => `<div class="al-row" data-id="${esc(a.id)}" role="button" tabindex="0">
       <span class="ap-emblem sm">${emblemSVG(a, 26, { title: false })}</span>
       <span class="grow"><b>${esc(a.name)}</b> · ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${esc(durationHe(al.minutes))}${al.task ? ` · <span class="muted">${esc(al.task)}</span>` : ''}</span>
@@ -659,7 +662,7 @@ function alertBannerHtml() {
 function applyAlert(a) {
   const al = mode === 'live' ? alertOf(liveState.get(a.id)) : null;
   office.setAlert(a.id, al ? { kind: al.kind, label: alertLabel(al) } : null);
-  if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`⚠ ${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
+  if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
   if (al) alertShown.set(a.id, al.kind); else alertShown.delete(a.id);
   return al;
 }
@@ -702,7 +705,7 @@ function historyHtml(days) {
 
 /* ---------------- 1. code reviews ---------------- */
 let reviews = [];
-const VERDICT_HE = { approved: ['אושר', '✅', 'v-ok'], changes_requested: ['נדרשו תיקונים', '🔁', 'v-chg'], commented: ['הערות', '💬', 'v-com'] };
+const VERDICT_HE = { approved: ['אושר', ic('circle-check', 'inline'), 'v-ok'], changes_requested: ['נדרשו תיקונים', ic('refresh-cw', 'inline'), 'v-chg'], commented: ['הערות', ic('message-circle', 'inline'), 'v-com'] };
 const SEV_HE = { critical: 'קריטי', high: 'גבוה', medium: 'בינוני', low: 'נמוך', nit: 'ניטפיק' };
 async function loadReviews() {
   if (!auth.loggedIn || mode !== 'live') return;
@@ -768,7 +771,7 @@ function agentReviewsHtml(a) {
       <div class="rv-mini-sum">${tr.points.length} PRs נבדקו · ממצאים: ${tr.first} → ${tr.last} ${changePct(tr)}</div>
       <div class="rv-mini-last muted">אחרון: PR #${esc(last.pr)} · ${esc(nameOf(last.reviewer_agent))} · ${VERDICT_HE[last.verdict]?.[0] || ''}</div>` : ''}
     ${given ? `<div class="rv-mini-last muted">ביקר ${given} PRs של אחרים</div>` : ''}
-    <button class="btn btn-ghost rv-open" id="ap-reviews" type="button">🔍 כל הביקורות</button></section>`;
+    <button class="btn btn-ghost rv-open" id="ap-reviews" type="button">${ic('search')}<span class="lbl">כל הביקורות</span></button></section>`;
 }
 let reviewFocus = null;
 function openReviews(focus = null) { reviewFocus = focus; renderReviewOverlay(); openOverlay('#review-ov'); }
@@ -813,7 +816,7 @@ function renderReviewOverlay() {
 
 /* ---------------- 4. what changed today ---------------- */
 let changesToday = [], changesDay = '', changesShown = null;
-const CHANGE_ICON = { 'pr.merged': '🔀', deploy: '🚀', 'task.done': '✅', 'pr.opened': '🔔' };
+const CHANGE_ICON = { 'pr.merged': ic('git-merge'), deploy: ic('rocket'), 'task.done': ic('circle-check'), 'pr.opened': ic('git-pull-request') };
 async function loadChanges() {
   if (!auth.loggedIn || mode !== 'live') return;
   try { const d = await apiGet('./api/changes'); if (d) { changesToday = d.changes || []; changesDay = d.day || ''; renderChanges(); } } catch (e) { console.warn(e); }
@@ -867,7 +870,7 @@ function meterVal(f, n) { return f === 'cost' ? fmtCost(n) : fmtNum(n); }
 function meterText(mt) { return `${METER_FIELD[mt.field]} היום ${meterVal(mt.field, mt.used)} מתוך ${meterVal(mt.field, mt.limit)} · ${Math.round(mt.pct)}%`; }
 function meterHtml(mt) {
   return `<div class="mt mt-${mt.level}">
-    <div class="mt-row"><span>${mt.level === 'over' ? '🔴 חרג מהתקציב' : mt.level === 'warn' ? '🟠 קרוב לתקציב' : 'תקציב יומי'}</span><span class="mt-num" dir="ltr">${esc(meterVal(mt.field, mt.used))} / ${esc(meterVal(mt.field, mt.limit))}</span></div>
+    <div class="mt-row"><span>${mt.level === 'over' ? `<i class="ldot ldot-over"></i> חרג מהתקציב` : mt.level === 'warn' ? `<i class="ldot ldot-warn"></i> קרוב לתקציב` : 'תקציב יומי'}</span><span class="mt-num" dir="ltr">${esc(meterVal(mt.field, mt.used))} / ${esc(meterVal(mt.field, mt.limit))}</span></div>
     <div class="mt-bar"><span style="width:${Math.min(100, mt.pct)}%"></span></div>
     <div class="muted">${esc(METER_FIELD[mt.field])} · ${Math.round(mt.pct)}% מהתקציב היומי</div></div>`;
 }
@@ -884,7 +887,7 @@ function refreshMeetings() {
   const before = lastMeetSig ? JSON.parse(lastMeetSig) : [];
   lastMeetSig = sig;
   if (!replay.active && mode === 'live') for (const g of groups) if (!before.some(b => b.key === g.key && b.ids.length >= g.ids.length))
-    toast(`👥 ${g.ids.map(nameOf).join(', ')} עברו לחדר הישיבות · ${g.label}`);
+    toast(`${g.ids.map(nameOf).join(', ')} עברו לחדר הישיבות · ${g.label}`);
 }
 
 /* ---------------- B5. morning summary ---------------- */
@@ -1002,7 +1005,7 @@ function replayStep(now) {
 function replayPlay(on) {
   replay.playing = on && replay.t < replay.t1;
   cancelAnimationFrame(replay.raf);
-  $('#replay-play').textContent = replay.playing ? '⏸' : '▶';
+  $('#replay-play').innerHTML = ic(replay.playing ? 'pause' : 'play');
   $('#replay-play').setAttribute('aria-label', replay.playing ? 'השהיה' : 'ניגון');
   if (replay.playing) { replay.lastFrame = 0; replay.raf = requestAnimationFrame(replayStep); }
 }
@@ -1081,7 +1084,7 @@ async function checkAuth() {
 }
 function renderAuthButton() {
   const b = $('#btn-login');
-  b.innerHTML = auth.loggedIn ? '🔓 יציאה' : '🔒 כניסה';
+  b.innerHTML = auth.loggedIn ? `${ic('lock-open')}<span class="lbl">יציאה</span>` : `${ic('lock')}<span class="lbl">כניסה</span>`;
   b.setAttribute('aria-label', auth.loggedIn ? 'יציאה מהמשרד החי' : 'כניסה למשרד החי');
 }
 function openLogin() {
@@ -1135,7 +1138,7 @@ $('#btn-login').addEventListener('click', e => {
   withBusy(e.currentTarget, 'יוצא…', async () => {
     await fetch('./api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     onLoggedOut();
-    return '🔒 כניסה';
+    return `${ic('lock')}<span class="lbl">כניסה</span>`;
   });
 });
 
@@ -1196,7 +1199,7 @@ $('#btn-pause').addEventListener('click', e => {
     if (paused) clearTimeout(simTimer); else scheduleNext();
     setPill();
     if (selectedId) renderPanel(findAgent(selectedId));
-    return paused ? '▶ הפעל' : '⏸ השהה';
+    return paused ? `${ic('play')}<span class="lbl">הפעל</span>` : `${ic('pause')}<span class="lbl">השהה</span>`;
   });
 });
 $('#btn-speed').addEventListener('click', e => {
@@ -1205,13 +1208,13 @@ $('#btn-speed').addEventListener('click', e => {
     await delay(250);
     speed = speed === 1 ? 2 : speed === 2 ? 4 : 1;
     if (!paused) scheduleNext();
-    return `מהירות ×${speed}`;
+    return `${ic('gauge')}<span class="lbl">מהירות ×${speed}</span>`;
   });
 });
 function startMeeting(auto = false) {
   meetingActive = true; meetingDone = true;
   if (window.innerWidth <= 900) switchView('view-scene');
-  toast(auto ? 'ישיבת בוקר אוטומטית — הסוכנים מתאספים ☕' : 'הסוכנים מתאספים לישיבת בוקר ☕');
+  toast(auto ? 'ישיבת בוקר אוטומטית — הסוכנים מתאספים' : 'הסוכנים מתאספים לישיבת בוקר', { icon: 'coffee' });
   office.gatherAll();
   AGENTS.forEach(a => { statOf(a.id).state = 'meeting'; });
   renderPanelDefault();
@@ -1219,7 +1222,7 @@ function startMeeting(auto = false) {
     office.disperseAll();
     AGENTS.forEach(a => { statOf(a.id).state = 'typing'; });
     meetingActive = false;
-    toast('ישיבת הבוקר הסתיימה — חזרו לעבוד 💪');
+    toast('ישיבת הבוקר הסתיימה — חזרו לעבוד', { icon: 'check' });
     if (selectedId) renderPanel(findAgent(selectedId));
   });
 }
@@ -1334,7 +1337,7 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${c.assigned ? '<span class="kb-manual" title="נוסף ידנית מהלוח">✍️ ידני</span> · ' : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ↪️ הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
+        <div class="kb-meta">${c.assigned ? `<span class="kb-manual" title="נוסף ידנית מהלוח">${ic('pencil', 'inline')} ידני</span> · ` : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ${ic('corner-up-right', 'inline')} הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');
@@ -1420,7 +1423,7 @@ document.addEventListener('pointerdown', unlockAudio, { capture: true });
 document.addEventListener('keydown', unlockAudio, { capture: true });
 function renderSoundBtn() {
   const b = $('#btn-sound'); if (!b) return;
-  b.textContent = bellSound.muted ? '🔇' : '🔊';
+  b.innerHTML = ic(bellSound.muted ? 'volume-x' : 'volume-2');
   b.setAttribute('aria-pressed', String(!bellSound.muted));
   b.title = bellSound.muted ? 'צליל הפעמון כבוי' : 'צליל הפעמון פועל';
 }
@@ -1441,11 +1444,11 @@ function renderNotifyBtn() {
 }
 $('#btn-notify')?.addEventListener('click', async () => {
   if (!canNotify) { toast('הדפדפן הזה לא תומך בהתראות. ההודעות יופיעו כאן בחלון.'); return; }
-  if (Notification.permission === 'granted') { notify('🔔 בדיקת התראה', 'ככה תיראה התראה כשסוכן מסיים משימה או פותח PR', true); return; }
+  if (Notification.permission === 'granted') { notify('בדיקת התראה', 'ככה תיראה התראה כשסוכן מסיים משימה או פותח PR', true); return; }
   if (Notification.permission === 'denied') { toast('ההתראות חסומות בהגדרות הדפדפן לאתר הזה', { err: true }); return; }
   try { await Notification.requestPermission(); } catch {}
   renderNotifyBtn();
-  if (Notification.permission === 'granted') toast('🔔 התראות הופעלו');
+  if (Notification.permission === 'granted') toast('התראות הופעלו', { icon: 'bell' });
 });
 renderNotifyBtn();
 function notify(title, body, force = false) {
@@ -1475,11 +1478,11 @@ function ringFor(a, why, he, { silentNotify = false } = {}) {
   if (bellLog.day !== d) { bellLog.day = d; bellLog.today = 0; }
   bellLog.today++;
   const prNum = why === 'pr' ? (String(he || '').match(/PR\s*#?\s*(\d+)/) || [])[1] : null;
-  const label = why === 'pr' ? `${a.name} · ${prNum ? 'PR #' + prNum : 'PR חדש'}` : why === 'manual' ? `${a.name} מצלצל/ת 🔔` : `${a.name} · ${he || 'סיים משימה'}`;
+  const label = why === 'pr' ? `${a.name} · ${prNum ? 'PR #' + prNum : 'PR חדש'}` : why === 'manual' ? `${a.name} מצלצל/ת` : `${a.name} · ${he || 'סיים משימה'}`;
   office.ringBell(a.id, label);
   if (replay.active) return;
-  const title = why === 'pr' ? `🔔 ${a.name} פתח/ה PR` : why === 'manual' ? '' : `🔔 ${a.name} סיים/ה משימה`;
-  if (title) toast(`${title}${he ? ' · ' + String(he).replace(/^סיים:\s*/, '').replace(/\s*🔔$/, '') : ''}`);
+  const title = why === 'pr' ? `${a.name} פתח/ה PR` : why === 'manual' ? '' : `${a.name} סיים/ה משימה`;
+  if (title) toast(`${title}${he ? ' · ' + String(he).replace(/^סיים:\s*/, '').replace(/\s*🔔$/, '') : ''}`, { icon: why === 'pr' ? 'git-pull-request' : 'bell-ring' });
   if (mode === 'live' && title && !silentNotify) notify(title, String(he || '').replace(/\s*🔔$/, ''));
   renderStrip();
 }
@@ -1494,7 +1497,7 @@ let drawerOpen = LS.get('drawer', '1') !== '0';
 function applyDrawer(animate = true) {
   const lay = $('#layout'), btn = $('#drawer-toggle');
   lay.classList.toggle('drawer-closed', !drawerOpen);
-  btn.textContent = drawerOpen ? '‹' : '›';
+  btn.innerHTML = ic(drawerOpen ? 'chevron-left' : 'chevron-right');
   btn.setAttribute('aria-expanded', String(drawerOpen));
   btn.title = drawerOpen ? 'סגירת הפאנל' : 'פתיחת הפאנל';
   const desktop = window.innerWidth > 900;
@@ -1518,7 +1521,7 @@ function renderStrip() {
     const list = roster().filter(a => office?.hasAgent(a.id));
     const alerts = mode === 'live' ? liveAlerts().length : 0;
     const ti = office?.timeInfo?.() || { hhmm: '--:--', phase: 'day' };
-    const icon = ti.phase === 'night' ? '🌙' : ti.phase === 'day' ? '☀️' : '🌅';
+    const icon = ic(ti.phase === 'night' ? 'moon' : ti.phase === 'day' ? 'sun' : 'sunrise');
     const working = list.filter(a => ['working', 'typing'].includes(stripStatus(a).s)).length;
     // live: the same numbers as the KPI cards (connected · tasks today); demo: leads + revenue
     const k = mode === 'live' ? Object.fromEntries(liveKpis().map(([id, , v]) => [id, v])) : null;
@@ -1531,8 +1534,8 @@ function renderStrip() {
       <div class="st-stat" title="${esc(s1[1])}"><b>${esc(s1[0])}</b>${esc(s1[1])}</div>
       <div class="st-stat" title="${esc(s2[1])} היום"><b>${esc(s2[0])}</b>${esc(s2[1])}</div>
       <div class="st-stat" title="אירועים מאז שהמסך נפתח"><b>${feedTotal.n}</b>אירועים</div>
-      <div class="st-stat" title="צלצולים בפעמון היום"><b>${bellLog.today}</b>🔔</div>
-      ${alerts ? `<div class="st-stat warn" title="התראות"><b>${alerts}</b>⚠</div>` : ''}
+      <div class="st-stat" title="צלצולים בפעמון היום"><b>${bellLog.today}</b>${ic('bell')}</div>
+      ${alerts ? `<div class="st-stat warn" title="התראות"><b>${alerts}</b>${ic('triangle-alert')}</div>` : ''}
       <div class="st-sep"></div>
       <div class="st-stat" title="השעה בחדר"><b>${icon}</b>${esc(ti.hhmm)}</div>`;
     el.querySelectorAll('.st-ag').forEach(b => b.addEventListener('click', () => { drawerOpen = true; LS.set('drawer', '1'); applyDrawer(); selectAgent(b.dataset.id, true); }));
@@ -1605,7 +1608,7 @@ function renderActions() {
   $('#ac-agents').innerHTML = list.map(a => `<button class="ac-agent" type="button" data-id="${esc(a.id)}" style="--ac:${esc(a.color)}" aria-pressed="${a.id === acState.agent}">${esc(a.name)}</button>`).join('');
   $('#ac-agents').querySelectorAll('.ac-agent').forEach(b => b.addEventListener('click', () => { acState.agent = b.dataset.id; renderActions(); }));
   const lifeBtn = document.querySelector('[data-act="life"]');
-  lifeBtn.textContent = life.on ? '🌱 חיים במשרד: פועל' : '🌱 חיים במשרד: כבוי';
+  lifeBtn.innerHTML = `${ic('sprout')}<span class="lbl">${life.on ? 'חיים במשרד: פועל' : 'חיים במשרד: כבוי'}</span>`;
   lifeBtn.setAttribute('aria-pressed', String(life.on));
   const tm = office?.timeInfo?.().mode || 'real';
   document.querySelectorAll('#ac-time [data-time]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.time === (tm === 'real' ? 'real' : acState.time))));
@@ -1640,7 +1643,7 @@ document.querySelectorAll('#actions-pop [data-act]').forEach(b => b.addEventList
   }
   else if (act === 'meeting') {
     office.gatherAll(); clearTimeout(teamMeetTimer);
-    toast('👥 ישיבת צוות על השטיח');
+    toast('ישיבת צוות על השטיח', { icon: 'users' });
     teamMeetTimer = setTimeout(() => office.disperseAll(), 9000);
   }
   else if (act === 'home') { clearTimeout(teamMeetTimer); office.disperseAll(); }
