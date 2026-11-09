@@ -12,7 +12,7 @@ body.cvx .cv .cv-bgb{position:absolute;inset:-40px;background:#eef1f4 url(./asse
 body.cvx .cv .cv-img{position:absolute;background:url(./assets/office-room-day.jpg) 0 0/100% 100% no-repeat;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);transition:filter 1.2s}
 body.cvx .cv .cv-img.cv-img-night{background-image:url(./assets/office-room-night.jpg);opacity:var(--night);transition:opacity 1.2s}
 body.cvx .cv-world{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-body.cvx .cv-actor{position:absolute;pointer-events:none;user-select:none;-webkit-user-drag:none;max-width:none;will-change:left,top;filter:drop-shadow(0 6px 8px rgba(0,0,0,.18))}
+body.cvx .cv-3d{position:absolute;pointer-events:none}
 body.cvx .cv.bell-shake{animation:cvshake .4s linear 3}
 @keyframes cvshake{25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
 body.cvx .cv-pills{position:absolute;inset:0;pointer-events:none}

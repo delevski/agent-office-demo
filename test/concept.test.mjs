@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { SLOTS, SLOT_ORDER, SEAT_CHARS, SEAT_BOX, SPOTS, assignSlots, layoutFor, planPath, FRAME } from '../concept.js';
+import { SLOTS, SLOT_ORDER, SEATS, SPOTS, assignSlots, layoutFor, planPath, FRAME } from '../concept.js';
 
 const read = f => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const roster = JSON.parse(read('roster.json'));
@@ -78,12 +78,12 @@ test('the board, review row and chat in the panel are rendered from the same dat
   assert.match(main, /o\.converse = spec =>/);
 });
 
-test('motion: every seat has its sprite set, plates exist, and paths between seats and spots stay on the floor', () => {
-  for (const c of SEAT_CHARS) for (const nm of ['sit', 'stand', 'walk1', 'walk2', 'pj', 'sleep']) assert.ok(existsSync(new URL(`../assets/sprites/${c}-${nm}.webp`, import.meta.url)), `${c}-${nm}`);
-  assert.equal(SEAT_BOX.length, 6);
-  for (const b of SEAT_BOX) { assert.ok(b.fx > 0 && b.fx < 1 && b.fy > 0 && b.fy < 1); }
-  for (const b of SEAT_BOX) for (const to of [SPOTS.talk[0], SPOTS.bell, SPOTS.coffee[0], SPOTS.meet]) {
-    const p = planPath({ x: b.fx, y: b.fy }, to);
+test('motion: every seat has a place behind its desk, and paths between seats and spots stay on the floor', () => {
+  assert.equal(SEATS.length, 6);
+  for (const s of SEATS) { assert.ok(s.fx > 0 && s.fx < 1 && s.fy > 0 && s.fy < 1); assert.equal(s.sides.length, 2); }
+  for (const b of SEATS) for (const to of [SPOTS.talk[0], SPOTS.bell, SPOTS.coffee[0], SPOTS.meet]) {
+    const side = b.sides[0];
+    const p = planPath(side, to);
     assert.ok(p.length >= 1 && p.length < 40);
     const end = p[p.length - 1]; assert.ok(Math.abs(end.x - to.x) < 1e-9 && Math.abs(end.y - to.y) < 1e-9);
   }
