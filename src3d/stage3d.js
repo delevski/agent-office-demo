@@ -4,11 +4,14 @@
 // perspective; invisible depth-only boxes where the painted desks are let the desks hide legs and chairs.
 // The people are one CC0 rigged mannequin (Quaternius "Universal Animation Library") with skeletal clips
 // (idle, walk, sit down, sit + talk, stand up), dressed per agent with vertex colours + hair, so each agent
-// has their own skin, hair and clothes. No other assets: ~0.6 MB glb.
+// has their own skin, hair and clothes. No other assets: ~0.27 MB glb (meshopt-compressed).
+// This file is the readable source; the page loads the minified, tree-shaken bundle built from it
+// (stage3d.min.js, `npm run build`), so three.js is not parsed until the room picture is on screen.
 import * as THREE from './three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { clone as skClone } from './vendor/SkeletonUtils.js';
-import { CALIB } from './concept-calib.js';
+import { MeshoptDecoder } from './vendor/meshopt_decoder.module.js';
+import { CALIB } from '../concept-calib.js';
 
 // Time of day changes the room, not whether an active agent works.
 export function seatedOverlay(t) {
@@ -17,7 +20,7 @@ export function seatedOverlay(t) {
   return t.night > 0.55 ? 'sleep' : null;
 }
 
-export const MODEL_URL = './assets/models/agent.glb';
+export const MODEL_URL = './assets/models/agent.glb?v=2';
 export const CLIPS = { idle: 'Idle_Loop', talk: 'Idle_Talking_Loop', walk: 'Walk_Loop', sitEnter: 'Sitting_Enter', sitExit: 'Sitting_Exit', sit: 'Sitting_Idle_Loop', sitTalk: 'Sitting_Talking_Loop' };
 const PANTS = ['#6f86a8', '#c9b79c', '#56627a', '#9aab94', '#b3a6c9', '#46526a'];
 const SKINS = ['#f2c9a4', '#e8b48c', '#d9a077', '#c98e63'];
@@ -85,25 +88,28 @@ function outfitMaterial(o) {
   return m;
 }
 
-const _v = [0, 1, 2, 3, 4, 5, 6].map(() => new THREE.Vector3()), _q = [0, 1, 2, 3].map(() => new THREE.Quaternion());
+const S = Array.from({ length: 12 }, () => new THREE.Vector3()), _q = [0, 1, 2, 3].map(() => new THREE.Quaternion());
+// scratch objects shared by every per-frame routine: the render loop allocates nothing
+const _oq = new THREE.Quaternion(), _oe = new THREE.Euler(), _tgt = new THREE.Vector3(), _pole = new THREE.Vector3(), _fa = new THREE.Vector3(), _fb = new THREE.Vector3();
+/** rotate `bone` (in world space) so that direction fromV points along toV, blended by w */
+function rotBone(bone, fromV, toV, w) {
+  const q = _q[0].setFromUnitVectors(fromV.normalize(), toV.normalize()); if (w < 1) q.slerp(_q[1].identity(), 1 - w);
+  const wq = bone.getWorldQuaternion(_q[2]), pq = bone.parent.getWorldQuaternion(_q[3]);
+  bone.quaternion.copy(pq.invert().multiply(q).multiply(wq)); bone.updateMatrixWorld(true);
+}
 /** two-bone IK: put `hand` on world point `target`, elbow bent towards `pole` (world direction) */
 function solveArm(upper, lower, hand, target, pole, w) {
-  const sh = upper.getWorldPosition(_v[0]), el = lower.getWorldPosition(_v[1]), hd = hand.getWorldPosition(_v[2]);
+  const sh = upper.getWorldPosition(S[0]), el = lower.getWorldPosition(S[1]), hd = hand.getWorldPosition(S[2]);
   const L1 = sh.distanceTo(el), L2 = el.distanceTo(hd);
-  const toT = _v[3].copy(target).sub(sh); let d = toT.length(); if (d < 1e-4) return;
-  const dir = toT.clone().divideScalar(d); d = Math.min(d, L1 + L2 - 1e-3);
+  const toT = S[3].copy(target).sub(sh); let d = toT.length(); if (d < 1e-4) return;
+  const dir = S[4].copy(toT).divideScalar(d); d = Math.min(d, L1 + L2 - 1e-3);
   const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-  const perp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
-  const elT = sh.clone().addScaledVector(dir, a).addScaledVector(perp, h);
-  const hdT = sh.clone().addScaledVector(dir, d);
-  const rot = (bone, fromV, toV) => { // rotate bone (world) so that fromV -> toV, blend by w
-    const q = _q[0].setFromUnitVectors(fromV.clone().normalize(), toV.clone().normalize()); if (w < 1) q.slerp(_q[1].identity(), 1 - w);
-    const wq = bone.getWorldQuaternion(_q[2]), pq = bone.parent.getWorldQuaternion(_q[3]);
-    bone.quaternion.copy(pq.invert().multiply(q).multiply(wq)); bone.updateMatrixWorld(true);
-  };
-  rot(upper, el.clone().sub(sh), elT.clone().sub(sh));
-  const el2 = lower.getWorldPosition(new THREE.Vector3()), hd2 = hand.getWorldPosition(new THREE.Vector3());
-  rot(lower, hd2.clone().sub(el2), hdT.clone().sub(el2));
+  const perp = S[5].copy(pole).addScaledVector(dir, -pole.dot(dir)).normalize();
+  const elT = S[6].copy(sh).addScaledVector(dir, a).addScaledVector(perp, h);
+  const hdT = S[7].copy(sh).addScaledVector(dir, d);
+  rotBone(upper, S[8].copy(el).sub(sh), S[9].copy(elT).sub(sh), w);
+  const el2 = lower.getWorldPosition(S[10]), hd2 = hand.getWorldPosition(S[11]);
+  rotBone(lower, S[8].copy(hd2).sub(el2), S[9].copy(hdT).sub(el2), w);
 }
 
 function blobTexture() {
@@ -114,7 +120,7 @@ function blobTexture() {
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
-export function createStage(host, { maxDpr = 2 } = {}) {
+export function createStage(host, { maxDpr = 1.5, modelUrl = MODEL_URL } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -138,11 +144,13 @@ export function createStage(host, { maxDpr = 2 } = {}) {
   const ray = new THREE.Raycaster(), v2 = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), tmp = new THREE.Vector3();
   function floorAt(fx, fy, out = new THREE.Vector3()) { v2.set(fx * 2 - 1, -(fy * 2 - 1)); ray.setFromCamera(v2, camera); return ray.ray.intersectPlane(plane, out) || out.set(0, 0, 0); }
   function toPic(v, out = {}) { tmp.copy(v).project(camera); out.x = (tmp.x + 1) / 2; out.y = (1 - tmp.y) / 2; return out; }
-  const deskLocal = (k, lx, lz) => { const d = CALIB.desks[k], c = Math.cos(d.yaw), s = Math.sin(d.yaw); return new THREE.Vector3(d.cx + lx * c + lz * s, 0, d.cz - lx * s + lz * c); };
+  const deskLocal = (k, lx, lz, out) => { const d = CALIB.desks[k], c = Math.cos(d.yaw), s = Math.sin(d.yaw); return out.set(d.cx + lx * c + lz * s, 0, d.cz - lx * s + lz * c); };
+  const blobGeo = new THREE.PlaneGeometry(1, 1);
+  let hairGeo = null; // one hair-back mesh geometry for every long-haired person
 
   let gltf = null, ready = false; const chars = new Map(); let pending = null;
-  const loader = new GLTFLoader();
-  const loaded = new Promise((res, rej) => loader.load(MODEL_URL, g => { gltf = g; ready = true; res(g); }, undefined, rej));
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const loaded = new Promise((res, rej) => loader.load(modelUrl, g => { gltf = g; ready = true; res(g); }, undefined, rej));
   loaded.then(() => { if (pending) setCast(pending.list, pending.seats); }).catch(e => console.warn('3D people failed to load', e));
 
   class Person {
@@ -152,12 +160,12 @@ export function createStage(host, { maxDpr = 2 } = {}) {
       this.mats = [];
       const mat = outfitMaterial(this.o); this.mat = mat;
       this.model.traverse(o => {
-        if (o.isSkinnedMesh) { o.geometry = o.geometry.clone(); addRest(o.geometry); o.material = mat; o.frustumCulled = false; this.mesh = this.mesh || o; (this.meshes ||= []).push(o); }
+        if (o.isSkinnedMesh) { if (!o.geometry.attributes.rest) addRest(o.geometry); /* one geometry and one skeleton layout for all six clones */ o.material = mat; o.frustumCulled = false; this.mesh = this.mesh || o; (this.meshes ||= []).push(o); }
         if (o.isBone) this.b[o.name] = o;
       });
       this.model.updateMatrixWorld(true);
       this.addHead();
-      this.blob = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false })); this.blob.rotation.x = -Math.PI / 2; this.blob.position.y = 0.004; this.blob.renderOrder = -5;
+      this.blob = new THREE.Mesh(blobGeo, new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false })); this.blob.rotation.x = -Math.PI / 2; this.blob.position.y = 0.004; this.blob.renderOrder = -5;
       scene.add(this.blob); scene.add(this.root);
       this.mixer = new THREE.AnimationMixer(this.model); this.act = {};
       for (const [k, name] of Object.entries(CLIPS)) { const clip = gltf.animations.find(a => a.name === name); if (clip) this.act[k] = this.mixer.clipAction(clip); }
@@ -172,7 +180,7 @@ export function createStage(host, { maxDpr = 2 } = {}) {
     addHead() {
       const h = this.b.Head; if (!h || !this.o.longHair) return;
       const hairMat = new THREE.MeshLambertMaterial({ color: this.o.hair });
-      const back = new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), hairMat); back.scale.set(1.0, 1.55, 0.62); back.position.set(0, 1.60, -0.085);
+      const back = new THREE.Mesh(hairGeo ||= new THREE.SphereGeometry(0.13, 20, 14), hairMat); back.scale.set(1.0, 1.55, 0.62); back.position.set(0, 1.60, -0.085);
       back.frustumCulled = false; const g = new THREE.Group(); g.add(back); h.attach(g); this.hairParts = g;
     }
     play(key, { fade = 0.25, once = false, timeScale = 1, offset = 0 } = {}) {
@@ -186,8 +194,8 @@ export function createStage(host, { maxDpr = 2 } = {}) {
       this.visible = true; this.root.visible = true; this.blob.visible = true;
       const sd = CALIB.desks[this.seat];
       const wasMode = this.mode; this.mode = t.mode;
-      const target = new THREE.Vector3();
-      if (t.mode === 'sit') target.copy(deskLocal(this.seat, CALIB.seatLocal[this.seat][0], CALIB.seatLocal[this.seat][1])); else floorAt(t.fx, t.fy, target);
+      const target = this._target ||= new THREE.Vector3();
+      if (t.mode === 'sit') deskLocal(this.seat, CALIB.seatLocal[this.seat][0], CALIB.seatLocal[this.seat][1], target); else floorAt(t.fx, t.fy, target);
       if (!this.prev) { this.pos.copy(target); this.prev = target.clone(); }
       // world speed from the planner's motion
       const mv = target.distanceTo(this.prev) / Math.max(dt, 1e-3); this.prev.copy(target);
@@ -196,8 +204,8 @@ export function createStage(host, { maxDpr = 2 } = {}) {
       // heading
       let want;
       if (t.mode === 'sit') want = Math.atan2(Math.sin(sd.yaw), Math.cos(sd.yaw)); // facing +z of the desk (towards the viewer)
-      else if (t.mode === 'walk' && t.dirX !== undefined && (t.dirX || t.dirY)) { const a = floorAt(t.fx, t.fy, new THREE.Vector3()), b = floorAt(t.fx + t.dirX, t.fy + t.dirY, new THREE.Vector3()); want = Math.atan2(b.x - a.x, b.z - a.z); }
-      else if (t.lookX !== undefined) { const b = floorAt(t.lookX, t.lookY, new THREE.Vector3()); want = Math.atan2(b.x - target.x, b.z - target.z); }
+      else if (t.mode === 'walk' && t.dirX !== undefined && (t.dirX || t.dirY)) { const a = floorAt(t.fx, t.fy, _fa), b = floorAt(t.fx + t.dirX, t.fy + t.dirY, _fb); want = Math.atan2(b.x - a.x, b.z - a.z); }
+      else if (t.lookX !== undefined) { const b = floorAt(t.lookX, t.lookY, _fb); want = Math.atan2(b.x - target.x, b.z - target.z); }
       else want = this.yaw;
       if (wasMode !== t.mode && t.mode === 'sit') this.yaw = want; // seat is always entered facing the desk
       const turn = ang(this.yaw, want); this.yaw += Math.sign(turn) * Math.min(Math.abs(turn), dt * (t.mode === 'walk' ? 7 : 4.5));
@@ -231,7 +239,7 @@ export function createStage(host, { maxDpr = 2 } = {}) {
     }
     applyOverlay(t, time) {
       const sit = this.mode === 'sit';
-      const q = new THREE.Quaternion(), e = new THREE.Euler();
+      const q = _oq, e = _oe;
       const twist = (name, x, y, z) => { const b = this.b[name]; if (!b || !this.rest[name]) return; e.set(x, y, z); q.setFromEuler(e); b.quaternion.copy(this.rest[name]).multiply(q); };
       if (seatedOverlay(t) === 'sleep') { // asleep: head down on the chest, arms still
         const k = this.nightT; const nod = Math.sin(time * 1.1 + this.timeOffset) * 0.015;
@@ -245,14 +253,14 @@ export function createStage(host, { maxDpr = 2 } = {}) {
         for (const [side, up, lo, hd] of [[-1, 'upperarm_r', 'lowerarm_r', 'hand_r'], [1, 'upperarm_l', 'lowerarm_l', 'hand_l']]) {
           if (!b[up] || !b[lo] || !b[hd]) continue;
           const lx = sl[0] + 0.0 + side * 0.15, lz = sl[1] + 0.2, tap = Math.max(0, Math.sin(time * (side < 0 ? 14 : 11.5) + this.timeOffset)) * 0.012;
-          const tgt = new THREE.Vector3(sd.cx + lx * c + lz * s_, 0.77 + tap, sd.cz - lx * s_ + lz * c);
-          const pole = new THREE.Vector3(side * 0.7 * c, -0.7, -side * 0.7 * -s_ - 0.25);
+          const tgt = _tgt.set(sd.cx + lx * c + lz * s_, 0.77 + tap, sd.cz - lx * s_ + lz * c);
+          const pole = _pole.set(side * 0.7 * c, -0.7, -side * 0.7 * -s_ - 0.25);
           solveArm(b[up], b[lo], b[hd], tgt, pole, w);
         }
         const hq = b.Head; if (hq) { e.set(0.12 + Math.sin(time * 0.7 + this.timeOffset) * 0.02, 0, 0); q.setFromEuler(e); hq.quaternion.multiply(q); }
       }
     }
-    dispose() { scene.remove(this.root); scene.remove(this.blob); this.mixer.stopAllAction(); this.meshes?.forEach(m => m.geometry.dispose()); }
+    dispose() { scene.remove(this.root); scene.remove(this.blob); this.mixer.stopAllAction(); this.mixer.uncacheRoot(this.model); this.mat.dispose(); this.blob.material.dispose(); }
   }
 
   function setCast(list, seats) {
@@ -261,12 +269,18 @@ export function createStage(host, { maxDpr = 2 } = {}) {
     for (const [id, p] of chars) if (!list.some(a => a.id === id && seats.get(a.id) === p.seat)) { p.dispose(); chars.delete(id); }
     list.forEach((a, i) => { if (!chars.has(a.id)) chars.set(a.id, new Person(a, seats.get(a.id), i)); });
   }
-  let W = 0, H = 0;
+  let W = 0, H = 0, dpr = 0, geo = '';
+  const dprWanted = box => Math.min(window.devicePixelRatio || 1, maxDpr); // retina screens render the people at 1.5x: sharp enough at their size, ~45% fewer pixels than 2x
+  let dprCut = 0; // adaptive quality: pixel-ratio steps given back when frames run long
+  /** place and size the canvas over the picture; touches the DOM only when something really changed */
   function resize(box) {
-    const dpr = Math.min(window.devicePixelRatio || 1, box.w < 700 ? 1.5 : maxDpr);
-    if (box.w !== W || box.h !== H) { W = box.w; H = box.h; renderer.setPixelRatio(dpr); renderer.setSize(Math.max(1, Math.round(box.w)), Math.max(1, Math.round(box.h)), false); }
-    cvs.style.left = box.x + 'px'; cvs.style.top = box.y + 'px'; cvs.style.width = box.w + 'px'; cvs.style.height = box.h + 'px';
+    const want = Math.max(1, dprWanted(box) - dprCut);
+    if (box.w !== W || box.h !== H || want !== dpr) { W = box.w; H = box.h; dpr = want; renderer.setPixelRatio(dpr); renderer.setSize(Math.max(1, Math.round(box.w)), Math.max(1, Math.round(box.h)), false); }
+    const g = box.x.toFixed(1) + ',' + box.y.toFixed(1) + ',' + box.w.toFixed(1) + ',' + box.h.toFixed(1);
+    if (g !== geo) { geo = g; cvs.style.left = box.x + 'px'; cvs.style.top = box.y + 'px'; cvs.style.width = box.w + 'px'; cvs.style.height = box.h + 'px'; }
   }
+  /** give back a quarter of the pixel ratio (down to 1); false when there is nothing left to give */
+  function lowerQuality() { if (dpr <= 1.01) return false; dprCut += 0.25; return true; }
   let clock = 0, lightN = 0;
   const daySky = col(0xffffff), nightSky = col(0xffe6c8), dayGround = col(0xf3e8d8), nightGround = col(0x8d8190);
   function frame(dt, poses, night, time) {
@@ -277,5 +291,7 @@ export function createStage(host, { maxDpr = 2 } = {}) {
     renderer.render(scene, camera);
   }
   const headOf = id => { const p = chars.get(id); return p && p.visible ? p.headPic : null; };
-  return { setCast, resize, frame, headOf, floorAt, get ready() { return ready; }, loaded, chars, canvas: cvs, camera, renderer, scene, dispose() { chars.forEach(c => c.dispose()); renderer.dispose(); cvs.remove(); } };
+  /** metres on the real floor per picture-fraction at a point (for a constant walking speed) */
+  function metresPerFraction(fx, fy) { floorAt(fx, fy, _fa); floorAt(fx + 0.02, fy + 0.02, _fb); return Math.max(1, _fa.distanceTo(_fb) / Math.hypot(0.02, 0.02)); }
+  return { setCast, resize, lowerQuality, metresPerFraction, get pixelRatio() { return dpr; }, frame, headOf, floorAt, get ready() { return ready; }, loaded, chars, canvas: cvs, camera, renderer, scene, dispose() { chars.forEach(c => c.dispose()); renderer.dispose(); cvs.remove(); } };
 }

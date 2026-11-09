@@ -10,6 +10,8 @@
 node_modules
 server
 test
+src3d
+scripts
 worker.js
 wrangler.toml
 package.json
