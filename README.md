@@ -178,6 +178,21 @@ Needs the optional Worker secret `SLACK_NOTIFY_TOKEN` (`npx wrangler secret put 
 
 **If Instinct's relay also posts for Hermes/Tab**, point it at `GET /api/inbox?relay=1` tasks whose `delivery` is still `pending`: the Worker now marks them `delivered` itself, so the relay only fills gaps (failed or unconfigured sends) and nobody is pinged twice.
 
+### Voice and attachments in "משימה חדשה"
+
+- **Mic button**: live Hebrew dictation (`he-IL`) with the browser's Web Speech API into the focused field (the note by default). No server involved. Browsers without it (or where it fails, e.g. iOS Safari) fall back to recording (`MediaRecorder`), converting to a small mono WAV in the browser and sending it to `POST /api/transcribe` (Workers AI Whisper, language `he`). If the `AI` binding is missing, the recording is attached to the task as a file and the page says "תמלול לא זמין".
+- **Attachments**: pick, drag-drop or paste (Ctrl/Cmd+V of a screenshot) images, PDF, CSV, or any file. Up to 5 files, 20 MB each; images get thumbnails, other files chips with a remove button. Files go to a **private** R2 bucket via `POST /api/uploads` (owner login, same-origin, raw body + `X-File-Name`). The content type is sniffed from the bytes (HTML/SVG/JS are stored as `text/plain` and always served as downloads, with `nosniff` and a sandbox CSP). Nothing is public: there is no static or R2 public URL.
+- **What agents get**: `GET /api/inbox` tasks carry `attachments: [{id,name,type,size,url}]`, and the Slack message lists them. An agent downloads `url` with its own Bearer token (`GET /api/files/:id`); it only works for files attached to a task assigned to that agent (Instinct's relay token can read any, like `?relay=1`). The owner reads them with the login cookie; the board card shows the file names as links. `createBoardClient(token).file(url)` does the download for you.
+- The note limit went from 300 to 1500 characters so a dictated note fits.
+- Cleanup: an upload the owner removes before sending is deleted (`DELETE /api/uploads/:id`, refused once attached). Files that were uploaded and then abandoned by closing the tab stay in the bucket; add an R2 lifecycle rule if you want (Dashboard -> R2 -> bucket -> Settings -> Object lifecycle rules -> delete objects with prefix `files/` after N days; only do that if old task attachments may disappear too).
+
+**Instinct, to turn it on (nothing breaks if you skip it, the buttons just stay hidden):**
+
+1. `npx wrangler r2 bucket create agent-office-files` (private, do not add a public domain or enable the r2.dev URL).
+2. In `wrangler.toml` uncomment the `[[r2_buckets]]` block (binding `FILES`) and, for server transcription, the `[ai]` block (binding `AI`). Workers AI is on the free plan (daily neurons allowance) and needs no secret.
+3. Deploy. `GET /api/me` (logged in) then reports `uploads: true` / `transcribe: true` and the page shows the attach button / uses server transcription.
+4. Check once with a real recording on the phone: the `transcribe` route tries `@cf/openai/whisper-large-v3-turbo` and falls back to `@cf/openai/whisper`; `AI_WHISPER_MODEL` overrides the first.
+
 ### "Not picked up" and ping again
 
 A queued task nobody has claimed after 10 minutes (`PICKUP_WARN_MIN` in `board-state.js`) shows a warning on the board card ("לא נלקחה כבר N דקות") with a **פינג שוב** button for the logged-in owner. The API field is `unclaimed` (`GET /api/tasks`), computed server-side and re-checked in the page every minute while the board is open.

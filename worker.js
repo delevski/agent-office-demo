@@ -14,6 +14,9 @@
 //   GET  /api/summary[?since=ISO|ms][&format=text] (session OR any agent token) the overnight digest
 //   POST /api/tasks {title, agent, note}  (session) "give a task": adds a card to that agent's to-do column.
 //                                          Creates durable per-agent inbox requests (idempotent requestId).
+//   POST /api/uploads                (session) raw file body + X-File-Name -> private R2 object (binding FILES, optional)
+//   GET  /api/files/:id              (session, or the assigned agent's Bearer token) the file, never public
+//   POST /api/transcribe             (session) Hebrew speech-to-text from an audio body (Workers AI binding AI, optional)
 //   GET  /api/ws                     (session) WebSocket live stream
 //   GET  /showcase                   public, embeddable demo-only view (same page, ?showcase mode)
 //   everything else                  -> static assets (the site; demo mode needs no login)
@@ -25,6 +28,7 @@ import {
 
 export { EventHub } from './server/hub.js';
 import { parseBoardTask } from './server/board.js';
+import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
 
 const CORS = {
@@ -107,7 +111,9 @@ export default {
       return privateJson({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', url.protocol === 'https:', 0) });
     }
     if (path === '/api/me') {
-      return privateJson({ loggedIn: await isLoggedIn(request, env), loginConfigured: loginConfigured(env) });
+      const loggedIn = await isLoggedIn(request, env);
+      // uploads / transcribe: whether the optional R2 (FILES) and Workers AI (AI) bindings exist, so the page can hide or degrade the features
+      return privateJson({ loggedIn, loginConfigured: loginConfigured(env), ...(loggedIn ? { uploads: filesConfigured(env), transcribe: aiConfigured(env) } : {}) });
     }
 
     /* ---- morning summary: Ori, or any agent / cron holding a write token (to post it somewhere) ---- */
@@ -119,6 +125,37 @@ export default {
       return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/json', 'Cache-Control': 'no-store' } });
     }
 
+    /* ---- attachments (R2) and voice transcription (Workers AI): private, optional bindings ---- */
+    if (path === '/api/uploads' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      return uploadFile(request, env);
+    }
+    if (path === '/api/transcribe' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      return transcribe(request, env);
+    }
+    const fileRoute = /^\/api\/(?:files|uploads)\/(f-[a-f0-9]{32})$/.exec(path);
+    if (fileRoute && (request.method === 'GET' || request.method === 'DELETE')) {
+      const id = fileRoute[1];
+      if (await isLoggedIn(request, env)) {
+        if (request.method === 'DELETE') {
+          if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+          const st = await (await hub(env).fetch('https://hub/board/file?id=' + id)).json();
+          if (st.attached) return privateJson({ ok: false, error: 'file is attached to a task' }, 409);
+          return deleteFile(env, id);
+        }
+        return serveFile(env, id);
+      }
+      // agents: GET only, with their own token, and only files attached to a task assigned to them (Instinct's relay token: any)
+      const who = writerFor(request, env);
+      if (request.method !== 'GET' || !who.ok || !who.agent) return privateJson({ ok: false, error: 'login or per-agent token required' }, 401);
+      const st = await (await hub(env).fetch('https://hub/board/file?id=' + id + '&agent=' + (who.agent === 'instinct' ? '' : encodeURIComponent(who.agent)))).json();
+      if (!st.allowed) return privateJson({ ok: false, error: 'not found' }, 404);
+      return serveFile(env, id);
+    }
+
     /* ---- owner requests and per-agent inboxes ---- */
     if (path === '/api/tasks' && request.method === 'POST') {
       if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
@@ -128,6 +165,9 @@ export default {
       try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
       const parsed = parseBoardTask(body, tokenAgents(env));
       if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid task', details: parsed.errors }, 400);
+      const att = await resolveAttachments(env, parsed.attachments, url.origin);
+      if (!att.ok) return privateJson({ ok: false, error: 'invalid task', details: [att.error] }, att.error === 'uploads not configured' ? 501 : 400);
+      parsed.attachments = att.list;
       const res = await hub(env).fetch('https://hub/board/create', { method: 'POST', body: JSON.stringify(parsed) });
       const out = await res.json();
       // Instant Slack wake for every assignee (@-mention in #agents): only for newly created owner-session tasks

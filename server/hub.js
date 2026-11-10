@@ -124,7 +124,8 @@ export class EventHub {
       const input = await request.json();
       const existing = this.board.filter(t => t.requestId === input.requestId);
       if (existing.length) {
-        if (existing[0].title !== input.title || existing[0].note !== input.note || existing.map(t => t.agent).sort().join() !== [...input.agents].sort().join())
+        const ids = list => (list || []).map(a => a.id).join();
+        if (existing[0].title !== input.title || existing[0].note !== input.note || existing.map(t => t.agent).sort().join() !== [...input.agents].sort().join() || ids(existing[0].attachments) !== ids(input.attachments))
           return json({ ok: false, error: 'requestId conflict' }, 409);
         return json({ ok: true, duplicate: true, tasks: existing.map(t => boardView(t)) });
       }
@@ -132,11 +133,18 @@ export class EventHub {
       if (this.board.length + input.agents.length > BOARD_LIMIT) return json({ ok: false, error: 'board full; archive completed requests first' }, 409);
       const added = input.agents.map(agent => ({ id: 'board-' + input.requestId + '-' + agent,
         requestId: input.requestId, title: input.title, note: input.note, agent,
-        source: 'office-owner-session', created: now, updated: now, status: 'queued', delivery: 'pending', result: '', link: '' }));
+        source: 'office-owner-session', created: now, updated: now, status: 'queued', delivery: 'pending', result: '', link: '',
+        attachments: (input.attachments || []).map(a => ({ ...a })) }));
       this.board.push(...added);
       await this.state.storage.put(Object.fromEntries(added.map(t => ['board:' + t.id, t])));
       for (const task of added) await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
       return json({ ok: true, tasks: added.map(t => boardView(t)) });
+    }
+    if (url.pathname === '/board/file') { // who may read / delete an uploaded file: agent='' = any assignee (owner side checks)
+      const id = url.searchParams.get('id'), agent = url.searchParams.get('agent');
+      const any = this.board.some(t => (t.attachments || []).some(a => a.id === id));
+      const allowed = this.board.some(t => (!agent || t.agent === agent) && (t.attachments || []).some(a => a.id === id));
+      return json({ attached: any, allowed });
     }
     if (url.pathname === '/board/retry' && request.method === 'POST') {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);

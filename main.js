@@ -1187,14 +1187,24 @@ function reliabilityHtml(a, v) {
 }
 
 /* Owner requests: keep a stable key across a network retry. */
-let assignRequestId = '', assignFingerprint = '';
+let assignRequestId = '', assignFingerprint = '', media = null, mediaLoading = null;
+// Voice + attachments live in their own module, fetched only when the modal opens (nothing on the first paint).
+function loadAssignMedia() {
+  if (media) { media.relayout(); return; }
+  mediaLoading ||= import('./assign-media.js?v=1').then(mod => {
+    media = mod.mount({ form: $('#assign-form'), title: $('#assign-title'), note: $('#assign-note'), caps: () => ({ uploads: auth.uploads, transcribe: auth.transcribe }), toast, onUnauthorized: () => onLoggedOut(true) });
+    $('#assign-form').addEventListener('assign-media', e => { $('#assign-submit').disabled = !!e.detail.busy; });
+  }).catch(() => { mediaLoading = null; });
+}
 function openAssign(agentId = '') {
   const sel = $('#assign-agent');
   const list = LIVE.length ? LIVE : [];
   sel.innerHTML = '<option value="all">כולם: Instinct, Hermes, Tab</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
   assignRequestId = ''; assignFingerprint = '';
   $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
+  media?.reset();
   openOverlay('#assign-ov');
+  loadAssignMedia();
   setTimeout(() => $('#assign-title').focus(), 60);
 }
 $('#btn-assign')?.addEventListener('click', () => openAssign(selectedId || ''));
@@ -1202,16 +1212,19 @@ $('#assign-form')?.addEventListener('submit', e => {
   e.preventDefault();
   const title = $('#assign-title').value.trim(), agent = $('#assign-agent').value, note = $('#assign-note').value.trim();
   if (!title) { $('#assign-err').textContent = 'צריך כותרת למשימה'; $('#assign-title').focus(); return; }
-  const fingerprint = JSON.stringify({ title, agent, note });
+  media?.stop();
+  if (media?.busy()) { $('#assign-err').textContent = 'ממתין לסיום ההעלאה או התמלול'; return; }
+  const attachments = media ? media.ids() : [];
+  const fingerprint = JSON.stringify({ title, agent, note, attachments });
   if (fingerprint !== assignFingerprint) { assignRequestId = crypto.randomUUID(); assignFingerprint = fingerprint; }
   const requestId = assignRequestId;
   withBusy($('#assign-submit'), 'שומר בתור…', async () => {
     $('#assign-err').textContent = '';
-    const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, agent, note, requestId }) });
+    const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, agent, note, requestId, ...(attachments.length ? { attachments } : {}) }) });
     const d = await r.json().catch(() => ({}));
     if (r.status === 401) { onLoggedOut(true); return; }
     if (!r.ok || !d.ok) { $('#assign-err').textContent = 'לא נוסף: ' + ((d.details || []).join(', ') || d.error || r.status); return; }
-    closeOverlay('#assign-ov');
+    closeOverlay('#assign-ov'); media?.reset();
     toast(`נשמר בתור עבור ${agent === 'all' ? 'שלושת הסוכנים' : nameOf(agent)}. ממתין לאיסוף, לא בוצע עדיין.`);
     loadAgents();
     if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay();
@@ -1222,7 +1235,7 @@ $('#assign-form')?.addEventListener('submit', e => {
 async function checkAuth() {
   try {
     const r = await fetch('./api/me', { credentials: 'same-origin', cache: 'no-store' });
-    if (r.ok) Object.assign(auth, await r.json().then(d => ({ loggedIn: !!d.loggedIn, configured: !!d.loginConfigured })));
+    if (r.ok) Object.assign(auth, await r.json().then(d => ({ loggedIn: !!d.loggedIn, configured: !!d.loginConfigured, uploads: !!d.uploads, transcribe: !!d.transcribe })));
   } catch { /* static preview: no API -> demo only */ }
   renderAuthButton();
 }
@@ -1499,6 +1512,10 @@ function renderBoardOverlay() {
     </section>`;
   }).join('');
 }
+function filesHtml(b) {
+  const list = (b.attachments || []).filter(a => /^f-[a-f0-9]{32}$/.test(a.id));
+  return list.length ? `<div class="kb-files">${list.map(a => `<a class="kb-file" href="./api/files/${a.id}" target="_blank" rel="noopener">${ic('paperclip', 'inline')} ${esc(a.name)}</a>`).join('')}</div>` : '';
+}
 function boardStatusHtml(c) {
   if (!c.board) return '';
   const b = c.board;
@@ -1507,7 +1524,7 @@ function boardStatusHtml(c) {
   const warn = waiting ? `<div class="board-warn" role="alert"><span class="bw-ic">${ic('triangle-alert', 'inline')}</span> לא נלקחה כבר ${waitingMinutes(b)} דקות${b.pings ? ` · נשלח פינג ${b.pings > 1 ? b.pings + ' פעמים' : 'פעם אחת'}` : ''}</div>` : '';
   const retry = b.delivery === 'error' && b.status === 'queued';
   const ping = waiting && auth.loggedIn && !retry ? `<button class="btn btn-ghost board-ping" data-task="${esc(b.id)}">פינג שוב</button>` : '';
-  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${warn}${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${retry ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}${ping}`;
+  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${warn}${filesHtml(b)}${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${retry ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}${ping}`;
 }
 function onBoardAction(e) {
   const btn = e.target.closest('.board-retry, .board-ping');
