@@ -164,3 +164,54 @@ body.cvx.cp-closed .cpanel-open-hint{display:block}
 @keyframes cvhop{50%{transform:translateY(-12%)}}
 @keyframes cvzz{50%{transform:translateY(-25%);opacity:.5}}
 @media (prefers-reduced-motion: reduce){ .cv-dot .av,.cv-dot .zz{animation:none !important} }
+
+/* ---- the agent card: opens when a person (or their name pill / 2D avatar) is clicked or tapped ---- */
+.cv-tag{cursor:pointer}
+.cv-tag::before{content:"";position:absolute;inset:-8px -4px}   /* a finger-sized target: the pill is ~24px tall */
+.cv-tag:focus-visible{outline:2px solid #0a84ff;outline-offset:2px}
+.oc-card{position:absolute;z-index:8;width:340px;max-height:min(520px,calc(100% - 184px));overflow:auto;overscroll-behavior:contain;scrollbar-width:none;padding:18px 18px 16px;direction:rtl;text-align:right;
+  background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border-radius:26px;
+  box-shadow:0 20px 60px rgba(0,0,0,.20),0 0 0 .5px rgba(0,0,0,.08);font-family:var(--cfont,Heebo,system-ui,sans-serif);color:#1d1d1f;
+  opacity:0;transform:translateY(8px) scale(.97);transition:opacity .18s,transform .22s;pointer-events:none}
+.oc-card::-webkit-scrollbar{display:none}
+.oc-card[hidden]{display:none}
+.oc-card.on{opacity:1;transform:none;pointer-events:auto}
+.oc-x{position:absolute;top:8px;left:8px;width:44px;height:44px;border:0;background:transparent;color:#6e6e73;font:inherit;font-size:15px;cursor:pointer;display:grid;place-items:center;border-radius:50%}
+.oc-x span{width:30px;height:30px;border-radius:50%;background:rgba(120,120,128,.16);display:grid;place-items:center;font-size:13px}
+.oc-x:hover span{background:rgba(120,120,128,.28)}
+.oc-head{display:flex;align-items:center;gap:12px;padding-inline-end:40px;margin-bottom:10px}
+.oc-emb{width:48px;height:48px;flex:none;border-radius:50%;background:#fff;box-shadow:0 0 0 3px var(--ac),0 4px 12px rgba(0,0,0,.14);display:grid;place-items:center;overflow:hidden}
+.oc-emb svg{width:82%;height:82%;display:block}
+.oc-name{font-size:19px;font-weight:700;letter-spacing:-.01em;line-height:1.15}
+.oc-role{font-size:13px;color:#86868b;margin-top:2px}
+.oc-st{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:14px;font-weight:600;margin-bottom:6px}
+.oc-dot{width:10px;height:10px;border-radius:50%;background:#8e8e93;flex:none}
+.oc-card[data-st="working"] .oc-dot{background:#30d158;box-shadow:0 0 0 4px rgba(48,209,88,.22)}
+.oc-card[data-st="idle"] .oc-dot{background:#0a84ff}
+.oc-card[data-st="sleeping"] .oc-dot{background:#af52de}
+.oc-card[data-st="blocked"] .oc-dot{background:#ff9f0a;box-shadow:0 0 0 4px rgba(255,159,10,.22)}
+.oc-card[data-st="offline"] .oc-dot{background:#c7c7cc}
+.oc-seen{margin-inline-start:auto;font-size:12px;font-weight:400;color:#86868b}
+.oc-sec{margin-top:12px}
+.oc-sec h4{margin:0 0 6px;font-size:12px;font-weight:600;color:#86868b;letter-spacing:.01em}
+.oc-cur{background:#fff;border-radius:16px;padding:10px 12px;box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 .5px rgba(0,0,0,.06)}
+.oc-cur-t{font-size:15px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;display:block}
+.oc-cur a,.oc-list a{color:inherit;text-decoration:none}
+.oc-act{font-size:13px;color:#3a3a3c;margin-top:4px;overflow-wrap:anywhere}
+.oc-meta{font-size:12.5px;color:#86868b;margin-top:4px}
+.oc-none{font-size:13px;color:#86868b;padding:2px 0}
+.oc-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.oc-list li{display:flex;align-items:baseline;gap:8px;font-size:13.5px;line-height:1.35;padding:5px 0;border-bottom:.5px solid rgba(60,60,67,.12)}
+.oc-list li:last-child{border-bottom:0}
+.oc-ic{width:16px;flex:none;text-align:center;font-weight:700;color:#86868b}
+.oc-done .oc-ic{color:#248a3d}.oc-failed .oc-ic{color:#d70015}.oc-blocked .oc-ic{color:#b25e00}
+.oc-t{flex:1;min-width:0;overflow-wrap:anywhere}
+.oc-w{flex:none;font-size:12px;color:#86868b}
+.oc-more{color:#86868b;font-size:12.5px}
+@media (max-width:900px){
+  .oc-card{left:0;right:0;bottom:0;top:auto;width:auto;max-height:74%;border-radius:26px 26px 0 0;padding:22px 18px calc(16px + env(safe-area-inset-bottom,0px));transform:translateY(24px);z-index:9}
+  .oc-card::before{content:"";position:absolute;top:8px;left:50%;width:38px;height:5px;margin-left:-19px;border-radius:3px;background:rgba(60,60,67,.28)}
+  .oc-card.on{transform:none}
+  .oc-x{top:12px}
+}
+@media (prefers-reduced-motion: reduce){ .oc-card{transition:none} }

@@ -1,7 +1,8 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
 import { createRoomCore } from './room-core.js?v=1';
-import { createConcept } from './concept.js?v=4';
+import { createConcept } from './concept.js?v=5';
+import { cardModel, cardHtml, placeCard } from './agent-card.js?v=1';
 import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
@@ -89,6 +90,7 @@ function syncCast() {
   if (cvMode !== mode) { if (cvMode) chatLog = mode === 'demo' ? demoChatSeed() : []; cvMode = mode; } // live mode never shows the demo conversation
   { const card = document.querySelector('.scene-card'); const n = parseFloat(card && card.style.getPropertyValue('--night')); if (!Number.isNaN(n)) cv.setNight(n); }
   cv.setCast(castNow());
+  if (acId && !castNow().some(x => x.id === acId)) closeAgentCard(); // the mode changed: that person is not in this room
   castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
   renderCPanel();
 }
@@ -134,8 +136,62 @@ function renderCPanel() {
   const lines = chatLog.slice(-3);
   $('#cp-chat').innerHTML = lines.length ? lines.map(l => `<div class="cm">${chip(l.a)}<span class="cb">${esc(l.text)}</span></div>`).join('') : '<div class="muted">כשסוכנים ידברו, השיחה תופיע כאן</div>';
 }
+
+/* ---------------- agent card: click / tap a person in the room ----------------
+   Built from the data the dashboard already holds (liveState from /api/agents, or the demo board); nothing is fetched here,
+   nothing runs while it is closed, and while it is open it re-renders only when the data changes (and every 15 s for the clock). */
+let acEl = null, acId = null, acTimer = 0, acHtml = '', acHide = 0;
+function agentCardModel(a) {
+  const status = mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working');
+  return cardModel({ agent: a, status, sleeping: cv.isSleeping(a.id), view: liveState.get(a.id) || null, demo: demoBoard.get(a.id) || null, now: nowRef() });
+}
+function fillAgentCard(a) {
+  const m = agentCardModel(a), html = cardHtml(m, { esc, emblem: emblemSVG(a, 44, { title: false }) });
+  acEl.dataset.st = m.status; acEl.setAttribute('aria-label', `${m.name} · ${m.statusLabel}`);
+  if (html !== acHtml) { acHtml = html; acEl.innerHTML = html; }
+}
+function onAcDown(e) { // a tap outside the card closes it (a tap on a person switches the card instead)
+  if (!acEl || acEl.contains(e.target) || e.target.closest?.('.cv-tag')) return;
+  if (e.target.closest?.('#cv') && cv.pickAt(e.clientX, e.clientY)) return;
+  closeAgentCard();
+}
+function onAcKey(e) { if (e.key === 'Escape') closeAgentCard(); }
+function openAgentCard(id, pt) {
+  const a = castNow().find(x => x.id === id); if (!a) return;
+  if (!acEl) {
+    acEl = document.createElement('aside'); acEl.id = 'agent-card'; acEl.className = 'oc-card'; acEl.hidden = true; acEl.setAttribute('role', 'dialog');
+    acEl.addEventListener('click', e => { if (e.target.closest('.oc-x')) closeAgentCard(); });
+    (document.querySelector('.scene-card') || document.body).appendChild(acEl);
+  }
+  clearTimeout(acHide);
+  const first = acId === null;
+  acId = id; acHtml = ''; fillAgentCard(a);
+  acEl.hidden = false;
+  const host = acEl.parentElement.getBoundingClientRect(), mobile = !isDesktop();
+  const rr = $('#cv').getBoundingClientRect(), ox = rr.left - host.left, oy = rr.top - host.top;   // the room's corner inside the card's container
+  const avoid = mobile ? [] : cv.boxes().map(b => ({ x0: b.x0 + ox, x1: b.x1 + ox, y0: b.y0 + oy, y1: b.y1 + oy, w: b.id === id ? 8 : 1 }));
+  const cp = document.body.classList.contains('cp-closed') ? null : $('#cpanel')?.getBoundingClientRect();   // the open board panel counts as something not to cover
+  if (cp && !mobile) avoid.push({ x0: cp.left - host.left, y0: cp.top - host.top, x1: cp.right - host.left, y1: cp.bottom - host.top, w: 0.6 });
+  const pl = placeCard({ anchor: pt ? { x: pt.x - host.left, y: pt.y - host.top } : { x: host.width / 2, y: host.height / 2 }, W: host.width, H: host.height, cw: acEl.offsetWidth, ch: acEl.offsetHeight, mobile, avoid });
+  acEl.style.left = pl.mode === 'float' ? pl.left + 'px' : ''; acEl.style.top = pl.mode === 'float' ? pl.top + 'px' : '';
+  requestAnimationFrame(() => acEl && acEl.classList.add('on'));
+  if (first) {
+    document.addEventListener('pointerdown', onAcDown, true); document.addEventListener('keydown', onAcKey);
+    acTimer = setInterval(() => { const b = acId && castNow().find(x => x.id === acId); if (b) fillAgentCard(b); }, 15000);
+    acEl.querySelector('.oc-x')?.focus({ preventScroll: true });
+  }
+}
+function closeAgentCard() {
+  if (!acEl || acId === null) return;
+  acId = null; clearInterval(acTimer);
+  document.removeEventListener('pointerdown', onAcDown, true); document.removeEventListener('keydown', onAcKey);
+  acEl.classList.remove('on');
+  acHide = setTimeout(() => { if (acId === null) acEl.hidden = true; }, 240);
+}
+function refreshAgentCard(id) { if (acId && (!id || id === acId)) { const a = castNow().find(x => x.id === acId); if (a) fillAgentCard(a); } }
 function initConcept() {
   cv = window.__cv = createConcept($('#cv'), { esc,
+    onPick: (id, pt) => { if (id) openAgentCard(id, pt); else closeAgentCard(); },
     avatar: a => emblemSVG(a, 40, { title: false }),
     onStrike: strength => { bellSound.ring(strength, strength < 0.9 ? -2 : 0); window.__bellStrikes.push({ clock: +(performance.now() / 1000).toFixed(2), strength }); },
     onLine: (id, text) => {
@@ -572,6 +628,7 @@ function onAgentUpdate(view, { quiet = false, replaying = false } = {}) {
   applyAlert(a);
   scheduleMeetings();
   refreshWorld();
+  refreshAgentCard(a.id);
   if (quiet || mode !== 'live') return;
   renderKpis();
   refreshAgentViews(a);
