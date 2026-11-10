@@ -858,3 +858,8 @@ body[data-tod="night"] .topbar{background:rgba(255,255,255,.82)}
   .top-actions .btn,.top-actions .btn#btn-login{width:32px;height:32px}
 }
 @media (prefers-reduced-motion: reduce){ .kpi.flash{animation:none} }
+
+/* board: queued task nobody has claimed yet */
+.board-warn { margin-top:6px; padding:6px 10px; border-radius:10px; font-size:.78rem; font-weight:600; color:#8a4b00; background:#fff3dc; border:1px solid #f1d08f; display:flex; align-items:center; gap:6px; }
+.board-warn .bw-ic { display:inline-flex; color:#c26a00; }
+.board-ping { margin-top:8px; max-width:100%; white-space:normal; min-height:44px; color:#8a4b00; background:#fff3dc; border-color:#f1d08f; }

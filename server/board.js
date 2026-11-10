@@ -1,4 +1,5 @@
 // Durable owner-submitted requests. Agent reports cannot create a trusted board request.
+import { notPickedUp } from '../board-state.js';
 export const BOARD_AGENTS = ['instinct', 'hermes', 'tab'];
 export const BOARD_LIMIT = 300;
 export function parseBoardTask(body, known) {
@@ -15,7 +16,7 @@ export function parseBoardTask(body, known) {
 }
 export function boardView(task, now = Date.now()) {
   const { claimToken, ...view } = task;
-  return { ...view, stale: ['running', 'queued'].includes(task.status) && now - task.updated > 30 * 60_000 };
+  return { ...view, stale: ['running', 'queued'].includes(task.status) && now - task.updated > 30 * 60_000, unclaimed: notPickedUp(task, now) };
 }
 export function boardReport(task, kind = 'task.queued') {
   const status = task.status;

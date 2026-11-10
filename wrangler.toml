@@ -22,5 +22,6 @@ new_sqlite_classes = ["EventHub"]
 #   AGENT_TOKEN_INSTINCT   write token for Instinct
 #   AGENT_TOKEN_HERMES     write token for Hermes (when it joins)
 #   INGEST_TOKEN           legacy shared token (X-Ingest-Token), still accepted
-#   SLACK_NOTIFY_TOKEN     optional: Slack token allowed to post in #agents; enables the instant Instinct wake (server/notify.js)
+#   SLACK_NOTIFY_TOKEN     optional: Slack token allowed to post in #agents; enables the instant @-mention wake for every assignee (server/notify.js)
 #   SLACK_AGENTS_CHANNEL   optional: channel ID override (default C0CFVFY4684)
+#   SLACK_AGENT_MENTIONS   optional: JSON {"tab":"U...","hermes":"U...","instinct":"U..."} overriding the Slack user ids that get @-mentioned (defaults are built in)

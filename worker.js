@@ -25,7 +25,7 @@ import {
 
 export { EventHub } from './server/hub.js';
 import { parseBoardTask } from './server/board.js';
-import { notifyInstinct } from './server/notify.js';
+import { notifyAgents } from './server/notify.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -130,9 +130,10 @@ export default {
       if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid task', details: parsed.errors }, 400);
       const res = await hub(env).fetch('https://hub/board/create', { method: 'POST', body: JSON.stringify(parsed) });
       const out = await res.json();
-      // Instant wake for Instinct: only for newly created owner-session tasks (never for duplicates). Poll stays as backup.
+      // Instant Slack wake for every assignee (@-mention in #agents): only for newly created owner-session tasks
+      // (never for duplicates). The inbox poll stays as backup.
       if (res.ok && !out.duplicate && Array.isArray(out.tasks)) {
-        const job = notifyInstinct(env, out.tasks, hub(env));
+        const job = notifyAgents(env, out.tasks, hub(env));
         if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
       }
       return privateJson(out, res.status);
@@ -142,12 +143,21 @@ export default {
       const res = await hub(env).fetch('https://hub/board/list');
       return privateJson(await res.json(), res.status);
     }
-    const retry = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/retry$/.exec(path);
+    // "Ping again": the owner re-sends the Slack wake. /retry = only after a failed send (old behaviour, same route);
+    // /ping = any still-unclaimed queued task (the "not picked up" warning's button). Both re-post straight from the
+    // Worker when SLACK_NOTIFY_TOKEN is set; without it the task goes back to delivery=pending for the Instinct relay.
+    const retry = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/(retry|ping)$/.exec(path);
     if (retry && request.method === 'POST') {
       if (!(await isLoggedIn(request, env))) return privateJson({ error: 'login required' }, 401);
       if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ error: 'bad origin' }, 403);
-      const res = await hub(env).fetch('https://hub/board/retry', { method: 'POST', body: JSON.stringify({ id: retry[1] }) });
-      return privateJson(await res.json(), res.status);
+      const res = await hub(env).fetch('https://hub/board/retry', { method: 'POST', body: JSON.stringify({ id: retry[1], force: retry[2] === 'ping' }) });
+      const out = await res.json();
+      if (res.ok && out.task && env.SLACK_NOTIFY_TOKEN) {
+        const job = notifyAgents(env, [out.task], hub(env), undefined, { reminder: retry[2] === 'ping' });
+        if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
+        out.sent = true;
+      }
+      return privateJson(out, res.status);
     }
     const inbox = /^\/api\/inbox(?:\/(board-[a-zA-Z0-9-]+)\/(claim|delivery))?$/.exec(path);
     if (inbox) {

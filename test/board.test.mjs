@@ -164,42 +164,119 @@ test('presence: running owner claim survives idle, restart and another task comp
   assert.equal((await view()).current, null);
 });
 
-test('notify: new owner task for Instinct posts once to #agents, mentions only Instinct, stores receipt; others skip', async () => {
-  const { notifyInstinct } = await import('../server/notify.js');
+test('notify: every assignee gets one @-mention in #agents, mapping configurable, receipt per task, non-owner tasks skip', async () => {
+  const { notifyAgents, notifyInstinct } = await import('../server/notify.js');
+  assert.equal(notifyInstinct, notifyAgents);
   const calls = [], deliveries = [];
-  const transport = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000100' }) }; };
+  const transport = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000' + (100 + calls.length) }) }; };
   const stub = { fetch: (u, i) => { deliveries.push(JSON.parse(i.body)); return new Response('{}'); } };
   const env = { SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' };
-  const tasks = [{ id: 'board-a-instinct', agent: 'instinct', source: 'office-owner-session', status: 'queued', title: 'x <@everyone>', note: '' },
-    { id: 'board-a-tab', agent: 'tab', source: 'office-owner-session', status: 'queued', title: 'x', note: '' },
-    { id: 'board-b-instinct', agent: 'instinct', source: 'agent-report', status: 'queued', title: 'x', note: '' }];
-  const out = await notifyInstinct(env, tasks, stub, transport);
-  assert.equal(calls.length, 1); assert.equal(out.length, 1);
-  const body = JSON.parse(calls[0].init.body);
-  assert.equal(body.channel, 'C0CFVFY4684'); assert.match(body.text, /^<@U0CDK0BDWQ2>/);
-  assert.ok(!body.text.includes('U0CELHLPWGL') && !body.text.includes('@everyone>')); assert.ok(!JSON.stringify(out).includes('xoxb'));
-  assert.deepEqual(deliveries, [{ id: 'board-a-instinct', delivery: 'delivered', slackTs: '1794300000.000100', note: '' }]);
-  assert.deepEqual(await notifyInstinct({}, tasks, stub, transport), { skipped: 'not configured' });
+  const mk = (agent, extra = {}) => ({ id: 'board-a-' + agent, agent, source: 'office-owner-session', status: 'queued', title: 'x <@everyone>', note: '', ...extra });
+  const tasks = [mk('instinct'), mk('hermes'), mk('tab'), mk('tab', { id: 'board-b-tab', source: 'agent-report' }), mk('hermes', { id: 'board-c-hermes', status: 'running' }), mk('nobody', { id: 'board-d-nobody' })];
+  const out = await notifyAgents(env, tasks, stub, transport);
+  assert.equal(calls.length, 3); assert.deepEqual(out.map(o => o.agent), ['instinct', 'hermes', 'tab']);
+  const bodies = calls.map(c => JSON.parse(c.init.body));
+  assert.ok(bodies.every(b => b.channel === 'C0CFVFY4684'));
+  assert.match(bodies[0].text, /^<@U0CDK0BDWQ2>/); assert.match(bodies[1].text, /^<@U0CF7ASDK0R>/); assert.match(bodies[2].text, /^<@U0CELHLPWGL>/);
+  for (const b of bodies) {
+    assert.equal((b.text.match(/<@U[A-Z0-9]+>/g) || []).length, 1, 'exactly one mention per message');
+    assert.ok(!b.text.includes('@everyone>')); assert.match(b.text, /GET \/api\/inbox/); assert.match(b.text, /\/api\/inbox\/board-a-[a-z]+\/claim/);
+  }
+  assert.ok(!JSON.stringify(out).includes('xoxb'));
+  assert.deepEqual(deliveries.map(d => [d.id, d.delivery, d.note]), [['board-a-instinct', 'delivered', ''], ['board-a-hermes', 'delivered', ''], ['board-a-tab', 'delivered', '']]);
+  assert.deepEqual(await notifyAgents({}, tasks, stub, transport), { skipped: 'not configured' });
+  // mapping and channel are configurable by env; a bad mapping falls back to the defaults
+  calls.length = 0;
+  await notifyAgents({ ...env, SLACK_AGENTS_CHANNEL: 'C999', SLACK_AGENT_MENTIONS: '{"tab":"UCUSTOM123"}' }, [mk('tab'), mk('hermes')], stub, transport);
+  assert.equal(JSON.parse(calls[0].init.body).channel, 'C999'); assert.match(JSON.parse(calls[0].init.body).text, /^<@UCUSTOM123>/); assert.match(JSON.parse(calls[1].init.body).text, /^<@U0CF7ASDK0R>/);
+  calls.length = 0;
+  await notifyAgents({ ...env, SLACK_AGENT_MENTIONS: '{not json' }, [mk('tab')], stub, transport);
+  assert.match(JSON.parse(calls[0].init.body).text, /^<@U0CELHLPWGL>/);
   const failing = async () => ({ ok: true, status: 200, json: async () => ({ ok: false, error: 'not_in_channel' }) });
-  await notifyInstinct(env, tasks.slice(0, 1), stub, failing);
+  await notifyAgents(env, [mk('hermes')], stub, failing);
   assert.equal(deliveries.at(-1).delivery, 'error'); assert.match(deliveries.at(-1).note, /not_in_channel/);
+  const throwing = async () => { throw new Error('net'); };
+  await notifyAgents(env, [mk('tab')], stub, throwing);
+  assert.equal(deliveries.at(-1).note, 'Slack send failed');
 });
 
-test('notify: route posts once on first creation only, never duplicate or non-owner; receipt stored; execution still needs claim', async () => {
+test('slackTaskMessage: Instinct only with the explicit wake flag; reminder line only when asked', () => {
+  assert.throws(() => slackTaskMessage({ id: 'board-x', agent: 'instinct', title: 't', note: '' }));
+  assert.match(slackTaskMessage({ id: 'board-x', agent: 'instinct', title: 't', note: '' }, { wakeInstinct: true }), /^<@U0CDK0BDWQ2>/);
+  assert.ok(!slackTaskMessage({ id: 'board-x', agent: 'tab', title: 't', note: '' }).includes('תזכורת'));
+  assert.match(slackTaskMessage({ id: 'board-x', agent: 'tab', title: 't', note: '' }, { reminderMinutes: 12 }), /תזכורת.*12/);
+});
+
+test('notify: route posts for each assignee once on first creation only, never duplicate or non-owner; receipts stored; execution still needs claim', async () => {
   const { call, create } = await setup({ SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' });
   const sends = []; const realFetch = globalThis.fetch;
-  globalThis.fetch = async (u, i) => { sends.push({ u, body: JSON.parse(i.body) }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000200' }) }; };
+  globalThis.fetch = async (u, i) => { sends.push({ u, body: JSON.parse(i.body) }); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.00' + (200 + sends.length) }) }; };
   try {
     assert.equal((await call('/api/tasks', { agent: 'all', requestId: 'abcdefgh-1234-5678-9999', title: 'x' }, null)).status, 401);
     assert.equal((await call('/api/tasks', { agent: 'all', requestId: 'abcdefgh-1234-5678-9999', title: 'x' }, 'i')).status, 401);
     assert.equal(sends.length, 0);
     const a = await json(await create('all'));
-    assert.equal(sends.length, 1); assert.equal(sends[0].u, 'https://slack.com/api/chat.postMessage'); assert.match(sends[0].body.text, /^<@U0CDK0BDWQ2>/);
-    await json(await create('all')); assert.equal(sends.length, 1);
-    await json(await create('tab', '99999999-1234-1234-1234-123456789012')); assert.equal(sends.length, 1);
-    const t = (await json(await call('/api/tasks'))).tasks.find(x => x.id === a.tasks[0].id);
-    assert.equal(t.delivery, 'delivered'); assert.equal(t.status, 'queued');
+    assert.equal(sends.length, 3); assert.ok(sends.every(s => s.u === 'https://slack.com/api/chat.postMessage'));
+    assert.deepEqual(sends.map(s => s.body.text.slice(0, 14)).sort(), ['<@U0CDK0BDWQ2>', '<@U0CELHLPWGL>', '<@U0CF7ASDK0R>']);
+    await json(await create('all')); assert.equal(sends.length, 3, 'duplicate create does not re-ping');
+    await json(await create('tab', '99999999-1234-1234-1234-123456789012')); assert.equal(sends.length, 4);
+    assert.match(sends[3].body.text, /^<@U0CELHLPWGL>/);
+    const list = (await json(await call('/api/tasks'))).tasks;
+    assert.ok(list.filter(x => x.requestId === a.tasks[0].requestId).every(x => x.delivery === 'delivered' && x.status === 'queued' && /^\d+\.\d+$/.test(x.slackTs)));
+    const t = list.find(x => x.id === a.tasks[0].id);
     const c1 = await json(await call('/api/inbox/' + t.id + '/claim', {}, 'i'));
     assert.equal((await call('/api/inbox/' + t.id + '/claim', {}, 'i')).status, 409); assert.ok(c1.claimToken);
   } finally { globalThis.fetch = realFetch; }
+});
+
+test('board: unclaimed state appears after 10 minutes and clears on claim; re-ping is owner-only, re-posts, counts', async () => {
+  const { notPickedUp, PICKUP_WARN_MIN } = await import('../board-state.js');
+  assert.equal(PICKUP_WARN_MIN, 10);
+  assert.equal(notPickedUp({ status: 'queued', created: 1000 }, 1000 + 9 * 60_000), false);
+  assert.equal(notPickedUp({ status: 'queued', created: 1000 }, 1000 + 10 * 60_000 + 1), true);
+  assert.equal(notPickedUp({ status: 'running', created: 1000 }, 1000 + 60 * 60_000), false);
+  const { call, create, data, restart } = await setup({ SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' });
+  const sends = []; const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, i) => { sends.push(JSON.parse(i.body)); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.00' + (300 + sends.length) }) }; };
+  try {
+    const task = (await json(await create('hermes'))).tasks[0];
+    assert.equal((await json(await call('/api/tasks'))).tasks[0].unclaimed, false);
+    const saved = data.get('board:' + task.id); saved.created = Date.now() - 11 * 60_000; saved.updated = saved.created; data.set('board:' + task.id, saved); await restart();
+    assert.equal((await json(await call('/api/tasks'))).tasks[0].unclaimed, true);
+    // auth: owner only, CSRF-checked, agents cannot ping
+    assert.equal((await call('/api/tasks/' + task.id + '/ping', {}, null)).status, 401);
+    assert.equal((await call('/api/tasks/' + task.id + '/ping', {}, 'h')).status, 401);
+    assert.equal((await call('/api/tasks/' + task.id + '/ping', {}, 'owner', { Origin: 'https://evil.test' })).status, 403);
+    assert.equal(sends.length, 1);
+    const r = await json(await call('/api/tasks/' + task.id + '/ping', {}));
+    assert.equal(r.status, 200); assert.equal(r.sent, true);
+    assert.equal(sends.length, 2); assert.match(sends[1].text, /^<@U0CF7ASDK0R>\n⏰ תזכורת/);
+    const after = (await json(await call('/api/tasks'))).tasks[0];
+    assert.equal(after.pings, 1); assert.equal(after.delivery, 'delivered'); assert.equal(after.unclaimed, true, 'still unclaimed until the agent claims');
+    // the old retry route still works (failed delivery only) and re-posts for any agent
+    assert.equal((await call('/api/tasks/' + task.id + '/retry', {})).status, 409);
+    const bad = data.get('board:' + task.id); bad.delivery = 'error'; data.set('board:' + task.id, bad); await restart();
+    assert.equal((await json(await call('/api/tasks/' + task.id + '/retry', {}))).sent, true); assert.equal(sends.length, 3);
+    assert.equal((await json(await call('/api/tasks'))).tasks[0].delivery, 'delivered');
+    // claim clears the warning and the ping is no longer allowed
+    await call('/api/inbox/' + task.id + '/claim', {}, 'h');
+    const claimed = (await json(await call('/api/tasks'))).tasks[0];
+    assert.equal(claimed.status, 'running'); assert.equal(claimed.unclaimed, false);
+    assert.equal((await call('/api/tasks/' + task.id + '/ping', {})).status, 409);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('board: ping without Slack configured returns the task to pending for the relay, no post, no secret', async () => {
+  const { call, create } = await setup();
+  const task = (await json(await create('tab'))).tasks[0];
+  const r = await json(await call('/api/tasks/' + task.id + '/ping', {}));
+  assert.equal(r.status, 200); assert.ok(!r.sent); assert.equal(r.task.delivery, 'pending'); assert.ok(!JSON.stringify(r).includes('claimToken'));
+});
+
+test('board page: not-picked-up warning and owner-only ping button are wired to the ping route', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../main.js', import.meta.url), 'utf8');
+  assert.match(main, /board-warn/); assert.match(main, /kwarn/, 'desktop side panel shows it too'); assert.match(main, /board-ping/); assert.match(main, /\/ping/);
+  assert.match(main, /waiting && auth\.loggedIn/, 'ping button only for the logged-in owner');
+  assert.match(main, /from '\.\/board-state\.js\?v=1'/);
 });
