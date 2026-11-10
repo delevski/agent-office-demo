@@ -17,3 +17,4 @@ wrangler.toml
 package.json
 package-lock.json
 README.md
+audit-state.js

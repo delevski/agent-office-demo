@@ -896,3 +896,14 @@ body[data-tod="night"] .topbar{background:rgba(255,255,255,.82)}
 /* board: attachment chips on a task */
 .kb-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .kb-file{display:inline-flex;align-items:center;gap:4px;max-width:100%;padding:3px 9px;border-radius:99px;background:#f5f5f7;color:#0062cc;font-size:.72rem;font-weight:700;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* agent-to-agent tickets and cancelling a board task */
+.kb-ticket{color:#5856d6}
+.board-cancel{margin-top:6px;max-width:100%;white-space:normal;min-height:36px;font-size:.78rem;color:#6e6e73}
+.board-cancel.armed{color:#c62820;background:#ffe9e7;border-color:#f5b8b3}
+@media (max-width:640px){ /* six quick buttons do not fit a phone with labels: the secondary three keep their icon only */
+  body .scene-quick .btn{flex:1 0 auto !important}
+  body .scene-quick .btn.qk-sm{padding-inline:12px}
+  body .scene-quick .btn.qk-sm .lbl{display:none}
+  body .scene-quick{overflow-x:auto;scrollbar-width:none}
+}

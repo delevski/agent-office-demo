@@ -15,7 +15,7 @@ export async function notifyAgents(env, tasks, hubStub, transport = (...a) => fe
   const channel = env.SLACK_AGENTS_CHANNEL || AGENTS_CHANNEL;
   const mentions = parseMentions(env.SLACK_AGENT_MENTIONS);
   const now = Date.now();
-  const due = tasks.filter(t => t.source === 'office-owner-session' && t.status === 'queued' && mentions[t.agent]);
+  const due = tasks.filter(t => ['office-owner-session', 'agent-ticket'].includes(t.source) && t.status === 'queued' && mentions[t.agent]);
   return Promise.all(due.map(async task => {
     let delivery = 'error', note = '', slackTs = '';
     try {
