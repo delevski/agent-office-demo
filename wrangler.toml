@@ -18,12 +18,12 @@ new_sqlite_classes = ["EventHub"]
 # --- Optional bindings (see README "Voice and attachments"). Both are OFF until you uncomment them, and the
 # --- site, the board and the Slack ping all work without them (the attach button / server transcription are simply hidden).
 # 1) Attachments: create a PRIVATE R2 bucket once (`npx wrangler r2 bucket create agent-office-files`, never enable public access), then uncomment:
-# [[r2_buckets]]
-# binding = "FILES"
-# bucket_name = "agent-office-files"
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "agent-office-files"
 # 2) Server-side Hebrew transcription (only used by browsers without live dictation, e.g. iOS Safari). Free tier; uncomment:
-# [ai]
-# binding = "AI"
+[ai]
+binding = "AI"
 
 # Secrets (set with `npx wrangler secret put NAME`, never committed; see README "Login & agent API"):
 #   OFFICE_PASSWORD        Ori's login password
