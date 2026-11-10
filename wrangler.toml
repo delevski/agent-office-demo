@@ -15,12 +15,23 @@ bindings = [{ name = "HUB", class_name = "EventHub" }]
 tag = "v1"
 new_sqlite_classes = ["EventHub"]
 
+# --- Optional bindings (see README "Voice and attachments"). Both are OFF until you uncomment them, and the
+# --- site, the board and the Slack ping all work without them (the attach button / server transcription are simply hidden).
+# 1) Attachments: create a PRIVATE R2 bucket once (`npx wrangler r2 bucket create agent-office-files`, never enable public access), then uncomment:
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "agent-office-files"
+# 2) Server-side Hebrew transcription (only used by browsers without live dictation, e.g. iOS Safari). Free tier; uncomment:
+# [ai]
+# binding = "AI"
+
 # Secrets (set with `npx wrangler secret put NAME`, never committed; see README "Login & agent API"):
 #   OFFICE_PASSWORD        Ori's login password
 #   SESSION_SECRET         optional, signs the login cookie (defaults to a key derived from OFFICE_PASSWORD)
 #   AGENT_TOKEN_TAB        write token for Tab
 #   AGENT_TOKEN_INSTINCT   write token for Instinct
 #   AGENT_TOKEN_HERMES     write token for Hermes (when it joins)
+#   AI_WHISPER_MODEL       optional: Workers AI speech model override (default @cf/openai/whisper-large-v3-turbo)
 #   INGEST_TOKEN           legacy shared token (X-Ingest-Token), still accepted
 #   SLACK_NOTIFY_TOKEN     optional: Slack token allowed to post in #agents; enables the instant @-mention wake for every assignee (server/notify.js)
 #   SLACK_AGENTS_CHANNEL   optional: channel ID override (default C0CFVFY4684)

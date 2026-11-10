@@ -1,18 +1,22 @@
 // Durable owner-submitted requests. Agent reports cannot create a trusted board request.
 import { notPickedUp } from '../board-state.js';
+import { FILE_ID, MAX_FILES } from './files.js';
 export const BOARD_AGENTS = ['instinct', 'hermes', 'tab'];
 export const BOARD_LIMIT = 300;
+export const NOTE_MAX = 1500; // was 300: dictated notes and file descriptions need room
 export function parseBoardTask(body, known) {
   const title = typeof body?.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : '';
   const note = typeof body?.note === 'string' ? body.note.trim() : '';
   const agents = body?.agent === 'all' ? BOARD_AGENTS : [body?.agent];
   const requestId = typeof body?.requestId === 'string' ? body.requestId : '';
+  const attachments = Array.isArray(body?.attachments) ? [...new Set(body.attachments.map(String))] : [];
   const errors = [];
   if (!title || title.length > 160) errors.push('title: required, max 160');
-  if (note.length > 300) errors.push('note: max 300');
+  if (note.length > NOTE_MAX) errors.push('note: max ' + NOTE_MAX);
+  if (attachments.length > MAX_FILES || attachments.some(id => !FILE_ID.test(id))) errors.push('attachments: max ' + MAX_FILES + ' valid ids');
   if (agents.some(a => !BOARD_AGENTS.includes(a) || !known.includes(a))) errors.push('agent: unavailable');
   if (!/^[a-zA-Z0-9-]{16,80}$/.test(requestId)) errors.push('requestId: required');
-  return { title, note, agents, requestId, errors };
+  return { title, note, agents, requestId, attachments, errors };
 }
 export function boardView(task, now = Date.now()) {
   const { claimToken, ...view } = task;
