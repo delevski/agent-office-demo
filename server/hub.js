@@ -1,11 +1,14 @@
 // server/hub.js — the one Durable Object (SQLite-backed, free plan) behind the office.
 // Storage keys:  events, seq (feed, unchanged)  ·  agent:<id> (per-agent live state)
 //                reviews (code reviews, newest last)  ·  changes (merged PRs, deploys, closed tasks)
+//                audit:<day> (the "בקרה" log: PR lifecycle, agent messages, board tasks; one key per day, 30 days)
+//                ticketrate:<agent> (agent-to-agent ticket rate limit)
 //                fail:<ip> (login throttle)
 import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent, newlyDone, dayOf } from './agents.js';
 import { changesForDay, buildSummary, overnightSince, dayBounds } from '../insights.js';
 
-import { boardView, boardReport, BOARD_LIMIT } from './board.js';
+import { boardView, boardReport, BOARD_LIMIT, TICKET_PER_HOUR, TICKET_OPEN_MAX, TICKET_DEPTH_MAX, TERMINAL } from './board.js';
+import { auditFromReport, auditFromTask, buildAudit, mergeDay, AUDIT_DAYS } from '../audit-state.js';
 
 const FEED_MAX = 200;
 const REVIEWS_MAX = 300;
@@ -64,7 +67,7 @@ export class EventHub {
       view.presenceStale = boardView(active, now).stale;
     }
     view.tasks = [...owned.map(t => ({ id: t.id, title: t.title, status: t.status === 'queued' ? 'queued' : t.status,
-      since: t.created, ended: ['done', 'failed'].includes(t.status) ? t.updated : undefined,
+      since: t.created, ended: TERMINAL.includes(t.status) ? t.updated : undefined,
       link: t.link, assigned: true, note: t.note, board: boardView(t, now) })), ...view.tasks.filter(t => !owned.some(b => b.id === t.id))];
     return view;
   }
@@ -112,10 +115,40 @@ export class EventHub {
     writes.logmeta = this.logMeta;
   }
 
+  /** Append rows to the control log (one storage key per day; upsert by id, so a retried report never duplicates). */
+  async addAudit(events) {
+    const list = (events || []).filter(e => e && e.id && e.type && Number.isFinite(e.ts));
+    if (!list.length) return;
+    const byDay = new Map();
+    for (const e of list) { const d = dayOf(e.ts); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(e); }
+    const writes = {}; let newDay = false;
+    for (const [d, evs] of byDay) {
+      const cur = await this.state.storage.get('audit:' + d);
+      if (!cur) newDay = true;
+      writes['audit:' + d] = mergeDay(cur || [], evs);
+    }
+    await this.state.storage.put(writes);
+    if (newDay) { // keep AUDIT_DAYS days
+      const keys = [...(await this.state.storage.list({ prefix: 'audit:' })).keys()].sort();
+      if (keys.length > AUDIT_DAYS) await this.state.storage.delete(keys.slice(0, keys.length - AUDIT_DAYS));
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const now = Date.now();
 
+    if (url.pathname === '/audit/add' && request.method === 'POST') {
+      const body = await request.json();
+      await this.addAudit(body.events);
+      return json({ ok: true, ids: (body.events || []).map(e => e.id) });
+    }
+    if (url.pathname === '/audit') {
+      const all = [];
+      for (const v of (await this.state.storage.list({ prefix: 'audit:' })).values()) all.push(...v);
+      const q = Object.fromEntries(['day', 'agent', 'type', 'pr', 'repo'].map(k => [k, url.searchParams.get(k) || '']));
+      return json(buildAudit(all, q, now));
+    }
     if (url.pathname === '/board/list') {
       const agent = url.searchParams.get('agent');
       return json({ tasks: this.board.filter(t => !agent || t.agent === agent).map(t => boardView(t, now)), now });
@@ -138,7 +171,52 @@ export class EventHub {
       this.board.push(...added);
       await this.state.storage.put(Object.fromEntries(added.map(t => ['board:' + t.id, t])));
       for (const task of added) await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
+      await this.addAudit(added.map(t => auditFromTask(t, 'created', now)));
       return json({ ok: true, tasks: added.map(t => boardView(t)) });
+    }
+    // An agent opens a ticket for another agent (POST /api/inbox). `from` is the caller's token (set by the Worker), never the body.
+    if (url.pathname === '/board/ticket' && request.method === 'POST') {
+      const input = await request.json();
+      const existing = this.board.find(t => t.id === input.id);
+      if (existing) return existing.from === input.from && existing.agent === input.to && existing.title === input.title && (existing.note || '') === input.note
+        ? json({ ok: true, duplicate: true, task: boardView(existing, now) }) : json({ ok: false, error: 'requestId conflict' }, 409);
+      // same sender, same assignee, same title, still open: the same ticket, not a new one (stops accidental spam loops)
+      const twin = this.board.find(t => t.source === 'agent-ticket' && t.from === input.from && t.agent === input.to && t.title === input.title && !TERMINAL.includes(t.status));
+      if (twin) return json({ ok: true, duplicate: true, task: boardView(twin, now) });
+      const mine = this.board.filter(t => t.source === 'agent-ticket' && t.from === input.from);
+      if (mine.filter(t => !TERMINAL.includes(t.status)).length >= TICKET_OPEN_MAX) return json({ ok: false, error: 'too many open tickets from this agent (max ' + TICKET_OPEN_MAX + ')' }, 429);
+      const key = 'ticketrate:' + input.from;
+      const recent = ((await this.state.storage.get(key)) || []).filter(ts => now - ts < 3600_000);
+      if (recent.length >= TICKET_PER_HOUR) return json({ ok: false, error: 'rate limit: max ' + TICKET_PER_HOUR + ' tickets per hour', retry_after_s: Math.max(1, Math.ceil((recent[0] + 3600_000 - now) / 1000)) }, 429);
+      let depth = 0;
+      if (input.parent) {
+        const parent = this.board.find(t => t.id === input.parent && t.agent === input.from);
+        if (!parent) return json({ ok: false, error: 'parent: not a task assigned to you' }, 400);
+        depth = (parent.depth || 0) + 1;
+        if (depth > TICKET_DEPTH_MAX) return json({ ok: false, error: 'ticket chain too deep (max ' + TICKET_DEPTH_MAX + ')' }, 400);
+      }
+      if (this.board.length + 1 > BOARD_LIMIT) return json({ ok: false, error: 'board full; archive completed requests first' }, 409);
+      const task = { id: input.id, requestId: input.requestId, title: input.title, note: input.note, agent: input.to, from: input.from, ref: input.ref || '',
+        source: 'agent-ticket', created: now, updated: now, status: 'queued', delivery: 'pending', result: '', link: '', attachments: [], depth, ...(input.parent ? { parent: input.parent } : {}) };
+      this.board.push(task);
+      recent.push(now);
+      await this.state.storage.put({ ['board:' + task.id]: task, [key]: recent });
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
+      await this.addAudit([auditFromTask(task, 'created', now)]);
+      return json({ ok: true, task: boardView(task, now) });
+    }
+    // The owner cancels a task nobody has finished (queued, running or blocked). The agent's later reports are refused.
+    if (url.pathname === '/board/cancel' && request.method === 'POST') {
+      const body = await request.json(), task = this.board.find(t => t.id === body.id);
+      if (!task) return json({ error: 'not found' }, 404);
+      if (TERMINAL.includes(task.status)) return json({ error: 'already settled' }, 409);
+      const wasRunning = task.status === 'running';
+      task.status = 'cancelled'; task.updated = now; task.result = 'בוטל על ידי אורי';
+      await this.state.storage.put('board:' + task.id, task);
+      if (wasRunning) await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify({ ...boardReport(task, 'task.failed'), taskStatus: 'failed' }) }));
+      await this.addAudit([auditFromTask(task, 'cancelled', now)]);
+      this.broadcast({ type: 'agent', agent: this.agentView(this.agents.get(task.agent) || emptyAgent(task.agent, now), now) });
+      return json({ ok: true, task: boardView(task, now) });
     }
     if (url.pathname === '/board/file') { // who may read / delete an uploaded file: agent='' = any assignee (owner side checks)
       const id = url.searchParams.get('id'), agent = url.searchParams.get('agent');
@@ -159,12 +237,14 @@ export class EventHub {
     if (url.pathname === '/board/claim' && request.method === 'POST') {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);
       if (!task || task.agent !== body.agent) return json({ error: 'not assigned' }, 403);
-      if (['done', 'failed'].includes(task.status)) return json({ error: 'already settled' }, 409);
+      if (TERMINAL.includes(task.status)) return json({ error: 'already settled' + (task.status === 'cancelled' ? ' (cancelled by the owner)' : '') }, 409);
       if (task.claimToken && task.claimToken !== body.claimToken) return json({ error: 'already claimed; do not repeat execution' }, 409);
+      const first = !task.claimToken;
       task.claimToken ||= crypto.randomUUID();
       task.status = 'running'; task.updated = now;
       await this.state.storage.put('board:' + task.id, task);
       await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, 'task.start')) }));
+      if (first) await this.addAudit([auditFromTask(task, 'claimed', now)]);
       return json({ ok: true, task: boardView(task), claimToken: task.claimToken });
     }
     if (url.pathname === '/board/delivery' && request.method === 'POST') {
@@ -184,7 +264,7 @@ export class EventHub {
       if (!['task.start', 'task.progress', 'task.done', 'task.failed'].includes(r.kind)) return json({ error: 'unsupported board event' }, 400);
       const result = String(r.note || '').trim().slice(0, 2000);
       if (['task.done', 'task.failed'].includes(r.kind) && !result) return json({ error: 'result required' }, 400);
-      if (['done', 'failed'].includes(task.status)) {
+      if (TERMINAL.includes(task.status)) {
         return ['task.done', 'task.failed'].includes(r.kind) && task.status === (r.kind === 'task.failed' ? 'failed' : r.taskStatus || 'done') && result === task.result
           ? json({ ok: true, duplicate: true }) : json({ error: 'already settled' }, 409);
       }
@@ -192,6 +272,7 @@ export class EventHub {
       task.updated = now; task.result = result || task.result;
       task.link = r.task.link || task.link;
       await this.state.storage.put('board:' + task.id, task);
+      if (['task.done', 'task.failed'].includes(r.kind)) await this.addAudit([auditFromTask(task, task.status === 'failed' ? 'failed' : 'done', now)]);
       return this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, r.kind)) }));
     }
 
@@ -253,6 +334,7 @@ export class EventHub {
       for (const c of newChanges) this.changes = EventHub.upsert(this.changes, c, CHANGES_MAX);
       if (newChanges.length) writes.changes = this.changes;
       await this.state.storage.put(writes);
+      await this.addAudit(auditFromReport(r, now));
       if (this.dropDays?.length) {
         const keys = [];
         for (const d of this.dropDays) { keys.push('snap:' + d); for (let i = 0; i <= LOG_MAX_CHUNKS; i++) keys.push(`log:${d}:${i}`); }

@@ -85,7 +85,7 @@ function cleanConfig(c) {
 const MAX_PAST_MS = 400 * 86400_000;
 const FUTURE_SLACK_MS = 5 * 60 * 1000;
 /** ts for an event that may be reported late (a review written an hour ago). Future times clamp to now. */
-function eventTime(v, now, errors) {
+export function eventTime(v, now, errors) {
   if (v === null || v === undefined || v === '') return now;
   const t = typeof v === 'number' ? v : Date.parse(v);
   if (!Number.isFinite(t) || t <= 0) { errors.push('ts: not a date (ISO string or epoch ms)'); return now; }
@@ -94,18 +94,18 @@ function eventTime(v, now, errors) {
   return Math.min(t, now);
 }
 /** pr: 12 | "12" | "#12" | "https://github.com/owner/repo/pull/12" -> {pr, repo?} */
-function parsePr(v) {
+export function parsePr(v) {
   if (v === null || v === undefined) return { pr: '' };
   const s = str(v, 300);
   const m = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i.exec(s);
   if (m) return { pr: m[2], repo: m[1] };
   return { pr: str(s.replace(/^#/, ''), 20) };
 }
-function repoOf(v) {
+export function repoOf(v) {
   const s = str(v, 100).replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/+$/, '');
   return s;
 }
-function prLink(repo, pr) {
+export function prLink(repo, pr) {
   return /^[\w.-]+\/[\w.-]+$/.test(repo) && /^\d+$/.test(pr) ? `https://github.com/${repo}/pull/${pr}` : '';
 }
 const VERDICTS = {
@@ -174,7 +174,7 @@ export function parseMerge(body, sender, now = Date.now()) {
     change: {
       id: `pr:${repo}#${pr || title}`, type: 'pr.merged', agent: sender || '', pr, repo, title,
       link: link(body.link ?? body.url) || prLink(repo, pr),
-      author_agent: agentId(body.author_agent ?? body.author), merged_by: agentId(body.merged_by) || sender || '', ts,
+      author_agent: agentId(body.author_agent ?? body.author), merged_by: agentId(body.merged_by) || sender || '', sha: str(body.sha ?? body.merge_sha ?? body.commit, 40), ts,
     },
     errors,
   };
@@ -244,10 +244,16 @@ export function parseDeploy(body, sender, now = Date.now()) {
   const env = str(body.env ?? body.environment ?? 'production', 30);
   const version = str(body.version ?? body.sha ?? body.tag ?? body.commit, 40);
   const ts = eventTime(body.ts ?? body.deployed_at, now, errors);
+  // which PRs went out with this deploy (audit log): prs: [13, "#14", "https://github.com/o/r/pull/15"], repo: "owner/name"
+  const repo = repoOf(body.repo ?? body.repository ?? '');
+  const rawPrs = Array.isArray(body.prs) ? body.prs : (body.pr !== undefined && body.pr !== null && body.pr !== '' ? [body.pr] : []);
+  const prs = [];
+  for (const x of rawPrs.slice(0, 12)) { const p = parsePr(x); if (/^\d+$/.test(p.pr) && !prs.some(y => y.pr === p.pr)) prs.push({ pr: p.pr, repo: p.repo || repo }); }
   return {
     change: {
       id: `deploy:${target}:${env}:${version || ts}`, type: 'deploy', agent: sender || '', target, env, version,
       status: status || 'success', link: link(body.link ?? body.url), note: str(body.note, 140), ts,
+      ...(prs.length ? { prs } : {}),
     },
     errors,
   };
@@ -276,7 +282,7 @@ const KIND_ALIASES = {
   'task.handoff': 'handoff', 'hand_off': 'handoff', 'handover': 'handoff',
   'pr.open': 'pr.opened', 'pr.created': 'pr.opened', 'pr.new': 'pr.opened', 'pull_request.opened': 'pr.opened',
   'chat': 'chat.exchange', 'chat.agreed': 'chat.exchange', 'conversation': 'chat.exchange', 'slack.exchange': 'chat.exchange', 'agreement': 'chat.exchange',
-  'pr.review': 'review', 'review.done': 'review', 'pr.merge': 'pr.merged', 'merge': 'pr.merged', 'deployed': 'deploy', 'deploy.done': 'deploy',
+  'pr.review': 'review', 'pr.reviewed': 'review', 'review.done': 'review', 'pr.merge': 'pr.merged', 'merge': 'pr.merged', 'deployed': 'deploy', 'deploy.done': 'deploy',
   'task.started': 'task.start', 'task.begin': 'task.start',
   'task.completed': 'task.done', 'task.finished': 'task.done', 'task.ok': 'task.done',
   'task.error': 'task.failed',

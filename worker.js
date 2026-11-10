@@ -10,6 +10,10 @@
 //   GET  /api/events?since=N         (session) polling fallback / catch-up
 //   GET  /api/reviews[?author=id]    (session) code reviews (kind "review")
 //   GET  /api/changes[?day=YYYY-MM-DD] (session) what changed today: merged PRs, deploys, closed tasks
+//   GET  /api/audit[?day=&agent=&type=&pr=&repo=] (session only; agent tokens get 403) the "בקרה" control log: PR lifecycle,
+//                                          agent-to-agent messages, board tasks and tickets, grouped into one timeline
+//   POST /api/inbox {to,title,note?,link?}  (per-agent token) an agent opens a ticket for ANOTHER agent (from = the token's agent)
+//   POST /api/tasks/:id/cancel       (session) the owner cancels a task that is not finished
 //   GET  /api/replay[?day=YYYY-MM-DD]  (session) the day's reports + a start-of-day snapshot, for the replay
 //   GET  /api/summary[?since=ISO|ms][&format=text] (session OR any agent token) the overnight digest
 //   POST /api/tasks {title, agent, note}  (session) "give a task": adds a card to that agent's to-do column.
@@ -27,7 +31,8 @@ import {
 } from './server/auth.js';
 
 export { EventHub } from './server/hub.js';
-import { parseBoardTask } from './server/board.js';
+import { parseBoardTask, parseTicket } from './server/board.js';
+import { parseAuditKind, auditKind } from './audit-state.js';
 import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
 
@@ -69,6 +74,19 @@ async function ingest(request, env, forcedAgent = null) {
   if (who.agent) {
     if (body.agent && agentId(body.agent) !== who.agent) return json({ ok: false, error: 'token does not match agent' }, 403);
     body.agent = who.agent;
+  }
+  // Audit-only kinds (pr.approved, message): validated and written to the control log; they never move an agent's live state.
+  if (auditKind(body)) {
+    if (who.agent) for (const f of ['from', 'from_agent', 'reported_by']) {
+      if (body[f] && agentId(body[f]) !== who.agent) return json({ ok: false, error: 'token does not match ' + f }, 403);
+    }
+    const sender = who.agent || agentId(body.agent) || 'legacy';
+    const parsed = parseAuditKind(body, sender);
+    if (parsed.kind === 'pr.approved' && parsed.audit.actor !== sender && tokenAgents(env).includes(parsed.audit.actor))
+      parsed.errors.push('approver: an agent cannot report another agent\'s approval; the approver is the human who approved');
+    if (parsed.errors.length) return json({ ok: false, error: 'invalid ' + parsed.kind, details: parsed.errors }, 400);
+    const res = await hub(env).fetch('https://hub/audit/add', { method: 'POST', body: JSON.stringify({ events: [parsed.audit] }) });
+    return json({ ok: res.ok, kind: parsed.kind, audit_id: parsed.audit.id, reported_by: parsed.audit.reported_by }, res.status);
   }
   const report = normalizeReport(body);
   // review / pr.merged / deploy are validated; the original kinds never are (backward compatible)
@@ -186,6 +204,13 @@ export default {
     // "Ping again": the owner re-sends the Slack wake. /retry = only after a failed send (old behaviour, same route);
     // /ping = any still-unclaimed queued task (the "not picked up" warning's button). Both re-post straight from the
     // Worker when SLACK_NOTIFY_TOKEN is set; without it the task goes back to delivery=pending for the Instinct relay.
+    const cancel = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/cancel$/.exec(path);
+    if (cancel && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ error: 'login required' }, 401);
+      if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ error: 'bad origin' }, 403);
+      const res = await hub(env).fetch('https://hub/board/cancel', { method: 'POST', body: JSON.stringify({ id: cancel[1] }) });
+      return privateJson(await res.json(), res.status);
+    }
     const retry = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/(retry|ping)$/.exec(path);
     if (retry && request.method === 'POST') {
       if (!(await isLoggedIn(request, env))) return privateJson({ error: 'login required' }, 401);
@@ -216,10 +241,27 @@ export default {
         const res = await hub(env).fetch('https://hub/board/' + inbox[2], { method: 'POST', body: JSON.stringify({ ...body, id: inbox[1], agent: who.agent }) });
         return privateJson(await res.json(), res.status);
       }
+      if (request.method === 'POST' && !inbox[1]) { // agent-to-agent ticket
+        let body;
+        try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
+        const t = parseTicket(body, who.agent, tokenAgents(env));
+        if (t.errors.length) return privateJson({ ok: false, error: 'invalid ticket', details: t.errors }, 400);
+        const res = await hub(env).fetch('https://hub/board/ticket', { method: 'POST', body: JSON.stringify(t) });
+        const out = await res.json();
+        // same instant Slack wake as an owner task (only for a newly created ticket)
+        if (res.ok && !out.duplicate && out.task) {
+          const job = notifyAgents(env, [out.task], hub(env));
+          if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
+        }
+        return privateJson(out, res.status);
+      }
       return privateJson({ ok: false, error: 'method not allowed' }, 405);
     }
 
     /* ---- private reads: Ori only ---- */
+    if (path === '/api/audit' && !(await isLoggedIn(request, env))) {
+      return privateJson({ ok: false, error: writerFor(request, env).ok ? 'owner only' : 'login required' }, writerFor(request, env).ok ? 403 : 401);
+    }
     if (path.startsWith('/api/')) {
       if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
 
@@ -229,7 +271,7 @@ export default {
         const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
-      if (path === '/api/reviews' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
+      if (path === '/api/reviews' || path === '/api/audit' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
         const res = await hub(env).fetch('https://hub' + path.slice(4) + (url.search || ''));
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }

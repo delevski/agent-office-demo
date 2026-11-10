@@ -189,6 +189,6 @@ test('look: glass card, pointer cursor, 44px close target, bottom sheet on phone
 });
 
 test('cache-busting: new module versions in the import chain', () => {
-  assert.match(html, /main\.js\?v=32/); assert.match(html, /concept\.css\?v=4/);
+  assert.match(html, /main\.js\?v=33/); assert.match(html, /concept\.css\?v=4/);
   assert.match(main, /concept\.js\?v=5/); assert.match(main, /agent-card\.js\?v=1/); assert.match(concept, /agent-card\.js\?v=1/);
 });
