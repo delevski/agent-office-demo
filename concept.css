@@ -215,3 +215,9 @@ body.cvx.cp-closed .cpanel-open-hint{display:block}
   .oc-x{top:12px}
 }
 @media (prefers-reduced-motion: reduce){ .oc-card{transition:none} }
+
+.cpanel .kwarn{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px;margin-top:8px;padding:5px 8px;border-radius:10px;background:#fff3dc;border:1px solid #f1d08f;color:#8a4b00;font-size:11.5px;font-weight:600}
+.cpanel .kwarn svg{vertical-align:-2px;color:#c26a00}
+.cpanel .kping{white-space:nowrap;border:0;border-radius:8px;min-height:28px;padding:0 10px;background:#fff;color:#8a4b00;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 0 0 .5px rgba(138,75,0,.35)}
+.cpanel .kping:hover{background:#ffe9bd}
+@media (pointer:coarse){.cpanel .kping{min-height:44px;padding:0 14px}}

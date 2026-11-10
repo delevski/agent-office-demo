@@ -75,8 +75,8 @@ test('night/day logic is kept: same stops as the old room, working agents stay a
 });
 
 test('cache-busting: the changed modules carry new ?v= versions in the import chain', () => {
-  assert.match(html, /main\.js\?v=30/); assert.match(html, /concept\.css\?v=3/); assert.match(html, /styles\.css\?v=36/);
-  assert.match(main, /concept\.js\?v=5/); assert.match(main, /room-core\.js\?v=1/);
+  assert.match(html, /main\.js\?v=31/); assert.match(html, /concept\.css\?v=4/); assert.match(html, /styles\.css\?v=37/);
+  assert.match(main, /concept\.js\?v=5/); assert.match(main, /room-core\.js\?v=1/); assert.match(main, /board-state\.js\?v=1/);
   assert.match(concept, /stage3d\.min\.js\?v=1/);
   assert.match(concept, /agent\.glb\?v=2/); assert.match(stage, /agent\.glb\?v=2/);
 });

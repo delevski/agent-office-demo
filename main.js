@@ -4,6 +4,7 @@ import { createRoomCore } from './room-core.js?v=1';
 import { createConcept } from './concept.js?v=5';
 import { cardModel, cardHtml, placeCard } from './agent-card.js?v=1';
 import { createBell } from './sound.js';
+import { notPickedUp, waitingMinutes } from './board-state.js?v=1';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
 import { applyReport, publicView as viewAt, feedNote, isFeedEvent, emptyAgent } from './office-state.js';
@@ -106,6 +107,12 @@ function relMin(ts) {
   return mn < 60 ? `לפני ${mn} דק׳` : when(ts);
 }
 function chip(a) { return `<span class="pchip"><i style="background:${esc(a.color)}"></i>${esc(a.name)}</span>`; }
+// Queued board task nobody has claimed for 10+ minutes: warning chip + owner-only "ping again" (also in the board overlay).
+function isUnclaimed(b) { return !!b && b.status === 'queued' && (b.unclaimed || notPickedUp(b)); }
+function cpWaitHtml(c) {
+  const b = c.board; if (!isUnclaimed(b)) return '';
+  return `<div class="kwarn" role="alert"><span>${ic('triangle-alert', 'inline')} לא נלקחה ${waitingMinutes(b)} דק׳</span>${auth.loggedIn && b.delivery !== 'error' ? `<button class="kping board-ping" type="button" data-task="${esc(b.id)}">פינג שוב</button>` : ''}</div>`;
+}
 function renderCPanel() {
   const root = $('#cpanel'); if (!root || !cv) return;
   const bd = boardData();
@@ -116,7 +123,7 @@ function renderCPanel() {
     const list = bd.columns[k].slice(0, k === 'done' ? 4 : 5);
     const label = c => k === 'doing' ? relMin(c.since || c.ts) : (c.when || (k === 'done' ? when(c.ts) : ''));
     return `<div class="kcol k-${k}"><div class="khead"><span class="kdot"></span>${names[k]}<span class="kcount">${bd.columns[k].length}</span></div>`
-      + (list.length ? list.map(c => `<div class="kcard"><div class="kt">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div><div class="km">${chip(c.agent)}<span class="when">${esc(label(c))}</span></div></div>`).join('')
+      + (list.length ? list.map(c => `<div class="kcard"><div class="kt">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div><div class="km">${chip(c.agent)}<span class="when">${esc(label(c))}</span></div>${k === 'todo' ? cpWaitHtml(c) : ''}</div>`).join('')
         : `<div class="kempty">${esc(bd.empty?.[k] || '—')}</div>`) + '</div>';
   }).join('');
   // last code review
@@ -1459,8 +1466,8 @@ function refreshWorld(now = false) {
   if (!office) return;
   if (!now) { if (!worldTimer) worldTimer = setTimeout(() => { worldTimer = null; refreshWorld(true); }, 400); return; }
   const bd = boardData();
-  const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status + JSON.stringify(x.board || {})))]);
-  if (sig !== lastBoardSig) { lastBoardSig = sig; if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); }
+  const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status + JSON.stringify(x.board || {}) + (x.board && x.board.status === 'queued' && notPickedUp(x.board) ? '!' : '')))]);
+  if (sig !== lastBoardSig) { lastBoardSig = sig; if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); renderCPanel(); }
   const rows = shelfRows();
   const ssig = JSON.stringify(rows.map(r => [r.meta.id, r.skills, r.nodata]));
   if (ssig !== lastShelfSig) { lastShelfSig = ssig; if (!$('#shelf-ov').classList.contains('hidden')) renderShelfOverlay(); }
@@ -1495,18 +1502,31 @@ function renderBoardOverlay() {
 function boardStatusHtml(c) {
   if (!c.board) return '';
   const b = c.board;
+  const waiting = isUnclaimed(b);
   const label = b.status === 'running' ? 'הסוכן קיבל ועובד' : b.status === 'done' ? 'הסוכן דיווח שהושלם' : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
-  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${b.delivery === 'error' && b.status === 'queued' ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}`;
+  const warn = waiting ? `<div class="board-warn" role="alert"><span class="bw-ic">${ic('triangle-alert', 'inline')}</span> לא נלקחה כבר ${waitingMinutes(b)} דקות${b.pings ? ` · נשלח פינג ${b.pings > 1 ? b.pings + ' פעמים' : 'פעם אחת'}` : ''}</div>` : '';
+  const retry = b.delivery === 'error' && b.status === 'queued';
+  const ping = waiting && auth.loggedIn && !retry ? `<button class="btn btn-ghost board-ping" data-task="${esc(b.id)}">פינג שוב</button>` : '';
+  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${warn}${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${retry ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}${ping}`;
 }
-$('#board-ov-cols').addEventListener('click', e => {
-  const btn = e.target.closest('.board-retry');
+function onBoardAction(e) {
+  const btn = e.target.closest('.board-retry, .board-ping');
   if (!btn) return;
-  withBusy(btn, 'מחזיר לתור…', async () => {
-    const r = await fetch('./api/tasks/' + encodeURIComponent(btn.dataset.task) + '/retry', { method: 'POST', credentials: 'same-origin' });
-    if (!r.ok) throw new Error('retry failed');
-    await loadAgents(); renderBoardOverlay();
+  e.stopPropagation();
+  const ping = btn.classList.contains('board-ping');
+  withBusy(btn, ping ? 'שולח פינג…' : 'מחזיר לתור…', async () => {
+    const r = await fetch('./api/tasks/' + encodeURIComponent(btn.dataset.task) + (ping ? '/ping' : '/retry'), { method: 'POST', credentials: 'same-origin' });
+    if (r.status === 401) { onLoggedOut(true); return; }
+    if (r.status === 409 && ping) { toast('המשימה כבר נלקחה'); await loadAgents(); renderBoardOverlay(); return; }
+    if (!r.ok) throw new Error(ping ? 'ping failed' : 'retry failed');
+    if (ping) toast('נשלח פינג בסלאק');
+    await loadAgents(); renderBoardOverlay(); renderCPanel();
   });
-});
+}
+$('#board-ov-cols').addEventListener('click', onBoardAction);
+$('#cp-cols')?.addEventListener('click', onBoardAction);
+// "not picked up" is a function of time: re-evaluate once a minute, and only while the board is open.
+setInterval(() => { if (mode !== 'live') return; if (!$('#board-ov').classList.contains('hidden')) refreshWorld(true); }, 60_000);
 function renderShelfOverlay() {
   const rows = shelfRows();
   $('#shelf-ov-sub').textContent = mode === 'demo' ? 'דמו · סקילים לדוגמה של דמויות הדמו' : 'חי · היכולות שכל סוכן דיווח (config)';

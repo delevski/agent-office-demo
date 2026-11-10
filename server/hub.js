@@ -140,11 +140,13 @@ export class EventHub {
     }
     if (url.pathname === '/board/retry' && request.method === 'POST') {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);
-      if (!task || task.status !== 'queued' || task.delivery !== 'error') return json({ error: 'not retryable' }, 409);
+      // retry: only after a failed send. force (re-ping): any task nobody has claimed yet.
+      if (!task || task.status !== 'queued' || (task.delivery !== 'error' && !body.force)) return json({ error: 'not retryable' }, 409);
       task.delivery = 'pending'; task.deliveryNote = ''; task.updated = now;
+      if (body.force) { task.pings = (task.pings || 0) + 1; task.lastPing = now; }
       await this.state.storage.put('board:' + task.id, task);
       await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task)) }));
-      return json({ ok: true });
+      return json({ ok: true, task: boardView(task, now) });
     }
     if (url.pathname === '/board/claim' && request.method === 'POST') {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);
