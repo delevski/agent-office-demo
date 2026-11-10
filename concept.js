@@ -9,6 +9,7 @@
 // GL context) gets a light 2D fallback instead: a round emblem avatar per agent that sits at its desk and walks the same
 // paths, with the same name pills and speech bubbles.
 import { CALIB } from './concept-calib.js';
+import { actorBox, hitTest } from './agent-card.js?v=1';
 
 export const ROOM_DAY = './assets/office-room-day.jpg';
 export const ROOM_NIGHT = './assets/office-room-night.jpg';
@@ -92,7 +93,7 @@ export function planPath(from, to) {
   return out;
 }
 
-export function createConcept(root, { esc = s => String(s), onLine = () => {}, avatar = null, onStrike = () => {}, stageUrl = STAGE_URL, forceFallback = false } = {}) {
+export function createConcept(root, { esc = s => String(s), onLine = () => {}, avatar = null, onStrike = () => {}, onPick = null, stageUrl = STAGE_URL, forceFallback = false } = {}) {
   const dayImg = root.querySelector('.cv-img'), nightImg = root.querySelector('.cv-img-night'), pillsEl = root.querySelector('.cv-pills'), world = root.querySelector('.cv-world');
   let cast = [], seats = new Map(), W = 0, H = 0, zoom = 1, pan = 0, lay = null, night = 0;
   const status = new Map(), timers = new Map(), actors = new Map(), speakUntil = new Map();
@@ -198,6 +199,45 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {}, a
     const sl = night > 0.55 && ac.state === 'sit' && !(status.get(ac.id) === 'working' || status.get(ac.id) === 'typing') ? '1' : '0';
     if (el.dataset.sleep !== sl) el.dataset.sleep = sl;
     const wk = ac.state === 'walk' ? '1' : '0'; if (el.dataset.walk !== wk) el.dataset.walk = wk;
+  }
+
+  /* ---------- clicking / tapping a person ----------
+     Their hit box is computed on a pointer event only (nothing runs per frame while the card is closed): from above the head
+     down to the feet (or the bottom of the 2D avatar), at least 44 px each way. The name pill is a target of its own. */
+  const _hd = { x: 0, y: 0 };
+  function boxes() {
+    const out = [], r = 26 * (lay?.desktop ? lay.u : 0.8);
+    for (const ac of actors.values()) {
+      headPx(ac, _hd);
+      const head = { x: _hd.x, y: _hd.y };
+      let feet, extra = 0;
+      if (fallback) { const s = SLOTS[ac.seat], sf = SEATS[ac.seat]; feet = P(ac.x + (s.x - sf.fx), ac.y + (s.y - sf.fy) + 0.052); extra = r; } else feet = P(ac.x, ac.y);
+      out.push(actorBox(ac.id, head, feet, { extraBottom: extra }));
+    }
+    return out;
+  }
+  function pickAt(clientX, clientY) {
+    const rc = root.getBoundingClientRect();
+    return hitTest(boxes(), clientX - rc.left, clientY - rc.top);
+  }
+  /** where a person is, in client px (the card opens beside this point) */
+  function anchorOf(id) {
+    const ac = actors.get(id); if (!ac) return null;
+    const rc = root.getBoundingClientRect(); headPx(ac, _hd);
+    return { x: rc.left + _hd.x, y: rc.top + _hd.y };
+  }
+  const isSleeping = id => { const ac = actors.get(id); return !!ac && night > 0.55 && ac.state === 'sit' && !(status.get(id) === 'working' || status.get(id) === 'typing'); };
+  if (onPick) {
+    const idAt = e => { const t = e.target && e.target.closest ? e.target.closest('.cv-tag') : null; return t ? t.dataset.id : pickAt(e.clientX, e.clientY); };
+    root.addEventListener('click', e => { const id = idAt(e); onPick(id, id ? anchorOf(id) : null, e); });   // a click on empty room reports null (closes the card)
+    root.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('cv-tag')) { e.preventDefault(); const id = e.target.dataset.id; onPick(id, anchorOf(id), e); } });
+    let hoverT = 0, hovering = false;
+    root.addEventListener('pointermove', e => {                    // mouse only; at most every 60 ms
+      if (e.pointerType !== 'mouse' || e.timeStamp - hoverT < 60) return; hoverT = e.timeStamp;
+      const on = !!pickAt(e.clientX, e.clientY);
+      if (on !== hovering) { hovering = on; root.style.cursor = on ? 'pointer' : ''; }
+    }, { passive: true });
+    root.addEventListener('pointerleave', () => { if (hovering) { hovering = false; root.style.cursor = ''; } });
   }
   const poses = new Map();
   let raf = 0, last = 0, perfAcc = 0, perfN = 0, perfT0 = 0;
@@ -341,7 +381,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {}, a
       actors.set(a.id, mkActor(a, seat));
     }
     if (stage) stage.setCast(cast, seats);
-    pillsEl.innerHTML = cast.map(a => `<div class="cv-tag" data-id="${esc(a.id)}" data-seat="${seats.get(a.id)}" data-st="${status.get(a.id) || 'working'}" style="--ac:${esc(a.color)}"><i></i><span class="nm">${esc(a.name)}</span><span class="zz" aria-hidden="true">z</span></div>`).join('');
+    pillsEl.innerHTML = cast.map(a => `<div class="cv-tag" role="button" tabindex="0" aria-label="${esc(a.name)} · פרטים" data-id="${esc(a.id)}" data-seat="${seats.get(a.id)}" data-st="${status.get(a.id) || 'working'}" style="--ac:${esc(a.color)}"><i></i><span class="nm">${esc(a.name)}</span><span class="zz" aria-hidden="true">z</span></div>`).join('');
     tagEls.clear(); bubEls.clear();
     pillsEl.querySelectorAll('.cv-tag').forEach(el => tagEls.set(el.dataset.id, el));
     buildDots();
@@ -378,6 +418,6 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {}, a
   function setPan(p) { pan = Math.max(-0.3, Math.min(0.3, p)); place(); }
   const ro = new ResizeObserver(() => { place(); });
   ro.observe(root);
-  return { setCast, setStatus, say, ring, place, setZoom, getZoom: () => zoom, setPan, getPan: () => pan, seatOf: id => seats.get(id), converse, bell, coffee, gather, hop, setNight,
+  return { setCast, setStatus, say, ring, place, pickAt, anchorOf, isSleeping, boxes, setZoom, getZoom: () => zoom, setPan, getPan: () => pan, seatOf: id => seats.get(id), converse, bell, coffee, gather, hop, setNight,
     talking: () => talkers.slice(), get fallback() { return fallback; }, actorState: id => { const a = actors.get(id); return a ? { state: a.state, x: a.x, y: a.y, busy: a.busy } : null; }, get cast() { return cast; }, get stage() { return stage; }, get cast3d() { return stage ? [...stage.chars.keys()] : []; } };
 }
