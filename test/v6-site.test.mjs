@@ -9,7 +9,7 @@ const read = p => readFileSync(new URL(p, root), 'utf8');
 
 test('layout: full-screen room with a drawer, a closed-state strip and its toggle', () => {
   const html = read('index.html');
-  for (const id of ['drawer', 'drawer-toggle', 'drawer-strip', 'drawer-body', 'view-agents', 'view-feed', 'btn-actions', 'actions-pop', 'btn-rotl', 'btn-rotr', 'btn-sound', 'btn-notify'])
+  for (const id of ['drawer', 'drawer-toggle', 'drawer-strip', 'drawer-body', 'view-agents', 'view-feed', 'btn-actions', 'actions-pop', 'btn-sound', 'btn-notify'])
     assert.match(html, new RegExp(`id="${id}"`), id);
   assert.ok(html.indexOf('id="drawer-body"') < html.indexOf('id="view-agents"'), 'the side panel lives in the drawer');
   const css = read('styles.css');
@@ -18,11 +18,11 @@ test('layout: full-screen room with a drawer, a closed-state strip and its toggl
 });
 
 test('time of day: real clock by default, ?time=HH:MM / cycle as a debug override', () => {
-  const main = read('main.js'), office = read('office.js');
+  const main = read('main.js'), core = read('room-core.js'), stage = read('src3d/stage3d.js');
   assert.match(main, /time: QS\.get\('time'\)/);
-  assert.match(office, /function virtualNow\(\)/);
-  assert.match(office, /tickClock\(t, vnow\)/, 'the wall clock reads the room clock');
-  assert.match(office, /setPajamas\(ch, wantPj\)/);
+  assert.match(core, /function virtualNow\(\)/);
+  assert.match(core, /cycle/);
+  assert.match(stage, /nt = t\.night > 0\.55 \? 1 : 0/, 'pyjamas follow the room night');
 });
 
 test('bell: rings on task.done and pr.opened in live mode, notifications only after a tap', () => {
@@ -32,13 +32,6 @@ test('bell: rings on task.done and pr.opened in live mode, notifications only af
   const i = main.indexOf("Notification.requestPermission");
   assert.ok(i > 0 && main.lastIndexOf("addEventListener('click'", i) > main.lastIndexOf('\n}', i), 'permission is requested inside a click handler');
   assert.match(main, /if \(mode === 'live' && title && !silentNotify\) notify\(/, 'demo events never raise system notifications');
-});
-
-test('camera: no azimuth clamp, walls fade instead', () => {
-  const office = read('office.js');
-  assert.doesNotMatch(office, /goal\.az = Math\.min\(BASE_AZ \+ LIM\.az/);
-  assert.match(office, /function updateWalls\(dt\)/);
-  assert.match(office, /rotateBy\(rad\)/);
 });
 
 test('no audio files are shipped; the bell is synthesized', () => {

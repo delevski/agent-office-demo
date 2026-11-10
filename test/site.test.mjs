@@ -53,11 +53,10 @@ test('showcase: public route, demo only (no private API calls), embeddable', () 
 
 test('accessibility + performance guards', () => {
   assert.match(read('styles.css'), /prefers-reduced-motion:\s*reduce/);
-  const office = read('office.js');
-  assert.match(office, /prefers-reduced-motion/);
-  assert.match(office, /setPixelRatio\(Math\.min\(devicePixelRatio \|\| 1, maxDpr\)\)/); // capped pixel ratio
-  assert.match(office, /InstancedMesh/);
-  assert.match(office, /mergeStatic/);
+  assert.match(read('concept.css'), /prefers-reduced-motion/);
+  const stage = read('src3d/stage3d.js'), concept = read('concept.js');
+  assert.match(stage, /Math\.min\(window\.devicePixelRatio \|\| 1, maxDpr\)/); // capped pixel ratio
+  assert.match(concept, /document\.hidden/); assert.match(concept, /IntersectionObserver/); // no frames when nothing is visible
 });
 
 test('demo roster carries clearly-demo skills and sample tasks for the shelves and the board', () => {

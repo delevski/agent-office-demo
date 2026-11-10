@@ -5,12 +5,16 @@
 // day). Name pills and speech bubbles follow the people and come from data: demo roster in demo mode, the live
 // roster after login. Movement is planned on the painted floor (picture fractions); stage3d turns it into
 // skeletal animation at the matching spot of the real 3D floor.
-import { createStage } from './stage3d.js?v=2';
+// The 3D bundle (stage3d.min.js) is loaded lazily, after the room picture is on screen. A device without WebGL (or a lost
+// GL context) gets a light 2D fallback instead: a round emblem avatar per agent that sits at its desk and walks the same
+// paths, with the same name pills and speech bubbles.
 import { CALIB } from './concept-calib.js';
 
 export const ROOM_DAY = './assets/office-room-day.jpg';
 export const ROOM_NIGHT = './assets/office-room-night.jpg';
 export const IMG_ASPECT = 1050 / 1000;              // the picture is laid out 1050 x 1000 inside the 1600 x 1000 concept frame
+export const STAGE_URL = './stage3d.min.js?v=1';
+export const MODEL_URL = './assets/models/agent.glb?v=2';
 export const FRAME = { w: 1600, h: 1000, imgW: 1050, imgLeft: -25 };
 
 // Desk seats in the picture, as fractions of the picture (x, y) where the name pill sits.
@@ -88,14 +92,47 @@ export function planPath(from, to) {
   return out;
 }
 
-export function createConcept(root, { esc = s => String(s), onLine = () => {} } = {}) {
+export function createConcept(root, { esc = s => String(s), onLine = () => {}, avatar = null, onStrike = () => {}, stageUrl = STAGE_URL, forceFallback = false } = {}) {
   const dayImg = root.querySelector('.cv-img'), nightImg = root.querySelector('.cv-img-night'), pillsEl = root.querySelector('.cv-pills'), world = root.querySelector('.cv-world');
   let cast = [], seats = new Map(), W = 0, H = 0, zoom = 1, pan = 0, lay = null, night = 0;
   const status = new Map(), timers = new Map(), actors = new Map(), speakUntil = new Map();
   const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let box = { x: 0, y: 0, w: 1, h: 1 };
-  let stage = null;
-  try { stage = createStage(world); } catch (e) { console.warn('no WebGL: the people are not drawn', e); }
+  let stage = null, fallback = false, onScreen = true, nightLoaded = false;
+  const dotsEl = document.createElement('div'); dotsEl.className = 'cv-dots'; dotsEl.setAttribute('aria-hidden', 'true');
+  root.insertBefore(dotsEl, pillsEl);
+
+  /* ---------- the 3D people, loaded after the picture is on screen ---------- */
+  const hasWebGL = () => { try { const c = document.createElement('canvas'), g = c.getContext('webgl2') || c.getContext('webgl'); if (!g) return false; g.getExtension('WEBGL_lose_context')?.loseContext(); return true; } catch { return false; } };
+  /** no WebGL (or it died): round emblem avatars at the desks instead of 3D people */
+  function useFallback(why) {
+    if (fallback) return;
+    fallback = true; root.classList.add('cv-fallback');
+    console.warn('3D people not drawn, using the light 2D fallback:', why && why.message || why);
+    if (stage) { try { stage.dispose(); } catch { /* already gone */ } stage = null; }
+    buildDots(); place(); kick();
+  }
+  async function loadStage() {
+    if (forceFallback) return useFallback('forced');
+    try {
+      const modP = import(stageUrl);   // the downloads (bundle, model) run while we probe for WebGL
+      fetch(MODEL_URL).catch(() => {}); // warms the HTTP cache: the loader's own request joins this one
+      if (!hasWebGL()) { modP.catch(() => {}); return useFallback('no WebGL'); }
+      const mod = await modP;
+      const st = mod.createStage(world, { modelUrl: MODEL_URL });
+      st.canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); useFallback('GL context lost'); });
+      st.loaded.catch(e => useFallback(e));
+      stage = st; st.setCast(cast, seats);
+      place(); kick();
+    } catch (e) { useFallback(e); }
+  }
+  // the picture first (decoded and painted), then the 3D bundle and the model
+  {
+    const plate = new Image(); plate.src = ROOM_DAY;
+    const afterPaint = () => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(loadStage, 0))); // two frames: the picture has been painted
+    (plate.decode ? plate.decode() : new Promise((res, rej) => { plate.onload = res; plate.onerror = rej; })).catch(() => {}).then(afterPaint);
+  }
+  const stageReady = () => !!(stage && stage.ready);
 
   function recalc() {
     W = root.clientWidth; H = root.clientHeight;
@@ -109,8 +146,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
   /** metres per picture-fraction at a point of the floor (for a constant walking speed in the real 3D space) */
   function mpf(x, y) {
     if (!stage || !stage.ready) return 6;
-    const a = stage.floorAt(x, y), b = stage.floorAt(x + 0.02, y + 0.02);
-    return Math.max(1, a.distanceTo(b) / Math.hypot(0.02, 0.02));
+    return stage.metresPerFraction(x, y);
   }
 
   /* ---------- actors ---------- */
@@ -118,24 +154,64 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
     const s = SEATS[seat];
     return { id: a.id, seat, x: s.fx, y: s.fy, state: 'sit', path: [], dir: null, look: null, hop: 0, onArrive: null, busy: null, away: false, exitT: 0, pendingPath: null };
   }
-  function pillFor(ac) {
-    const el = pillsEl.querySelector(`.cv-tag[data-id="${CSS.escape(ac.id)}"]`); if (!el) return;
-    let x, y;
+  /* ---------- pills, bubbles and avatars: positioned with `translate` only (no top/left, no layout reads per frame) ---------- */
+  const setPos = (el, x, y) => { // writes only when the point really moved
+    const kx = Math.round(x * 4), ky = Math.round(y * 4);
+    if (el._kx === kx && el._ky === ky) return;
+    el._kx = kx; el._ky = ky; el.style.translate = (kx / 4) + 'px ' + (ky / 4) + 'px';
+  };
+  const tagEls = new Map(), bubEls = new Map(), dotElsById = new Map();
+  /** where the head is, in px: the 3D head when the model is up, else the desk seat's name-pill spot (2D fallback: it follows the avatar) */
+  function headPx(ac, out) {
     const hd = stage && stage.headOf(ac.id);
-    if (!hd) { const s = SLOTS[ac.seat], p = P(s.x, s.y); x = p.x; y = p.y; }
-    else { const p = P(hd.x, hd.y); x = p.x; y = p.y; }
+    if (hd) { const p = P(hd.x, hd.y); out.x = p.x; out.y = p.y; return; }
+    const s = SLOTS[ac.seat], sf = SEATS[ac.seat];
+    const p = fallback ? P(ac.x + (s.x - sf.fx), ac.y + (s.y - sf.fy)) : P(s.x, s.y);
+    out.x = p.x; out.y = p.y;
+  }
+  const _h = { x: 0, y: 0 };
+  function pillFor(ac) {
+    const el = tagEls.get(ac.id); if (!el) return;
+    headPx(ac, _h); let x = _h.x, y = _h.y;
     const pv = ac.pill; if (pv && Math.abs(pv.x - x) < 80 && Math.abs(pv.y - y) < 80) { x = pv.x + (x - pv.x) * 0.35; y = pv.y + (y - pv.y) * 0.35; } ac.pill = { x, y };
-    el.style.left = x.toFixed(1) + 'px'; el.style.top = y.toFixed(1) + 'px';
-    const b = pillsEl.querySelector(`.cv-bub[data-for="${CSS.escape(ac.id)}"]`);
-    if (b) { const bw = b.offsetWidth || 160; b.style.left = Math.max(bw / 2 + 6, Math.min(W - bw / 2 - 6, x)).toFixed(1) + 'px'; b.style.top = (y - 24 * (lay?.desktop ? lay.u : 0.8)).toFixed(1) + 'px'; }
+    setPos(el, x, y);
+    const b = bubEls.get(ac.id);
+    if (b) { const bw = b._w || 160; setPos(b, Math.max(bw / 2 + 6, Math.min(W - bw / 2 - 6, x)), y - 24 * (lay?.desktop ? lay.u : 0.8)); }
+    if (fallback) dotFor(ac);
+  }
+  function buildDots() {
+    dotsEl.innerHTML = ''; dotElsById.clear();
+    if (!fallback) return;
+    for (const a of cast) {
+      const el = document.createElement('div'); el.className = 'cv-dot'; el.dataset.id = a.id; el.style.setProperty('--ac', a.color);
+      el.innerHTML = '<i class="sh"></i><b class="av">' + (avatar ? avatar(a) : esc((a.name || '?').slice(0, 1).toUpperCase())) + '</b><u class="zz">z</u>';
+      dotsEl.appendChild(el); dotElsById.set(a.id, el);
+    }
+  }
+  function dotFor(ac) {
+    const el = dotElsById.get(ac.id); if (!el) return;
+    const s = SLOTS[ac.seat], sf = SEATS[ac.seat];
+    const p = P(ac.x + (s.x - sf.fx), ac.y + (s.y - sf.fy) + 0.052); // just under the name pill, which sits at head height
+    setPos(el, p.x, p.y);
+    const depth = 0.72 + Math.max(0, Math.min(1, (ac.y - 0.3) / 0.5)) * 0.5; // nearer to the viewer = bigger
+    const sc = depth.toFixed(2); if (el._sc !== sc) { el._sc = sc; el.style.setProperty('--dz', sc); }
+    const sl = night > 0.55 && ac.state === 'sit' && !(status.get(ac.id) === 'working' || status.get(ac.id) === 'typing') ? '1' : '0';
+    if (el.dataset.sleep !== sl) el.dataset.sleep = sl;
+    const wk = ac.state === 'walk' ? '1' : '0'; if (el.dataset.walk !== wk) el.dataset.walk = wk;
   }
   const poses = new Map();
-  let raf = 0, last = 0;
+  let raf = 0, last = 0, perfAcc = 0, perfN = 0, perfT0 = 0;
+  const anyMoving = () => { for (const ac of actors.values()) if (ac.state !== 'sit' || ac.hop > 0 || (speakUntil.get(ac.id) || 0) > now0) return true; return false; };
+  let now0 = 0;
   function tick(now) {
     raf = 0;
-    if (!W || !H || document.hidden) return;
-    if (lay && !lay.desktop && now - last < 30) { raf = requestAnimationFrame(tick); return; } // phones: ~30 fps
-    const dt = Math.min(0.1, (now - last) / 1000 || 0.016); last = now;
+    if (!W || !H || document.hidden || !onScreen) return;       // nothing visible: no frames at all
+    now0 = now;
+    const moving = anyMoving();
+    // phones draw at ~30 fps; so does a calm room (everybody seated, typing or asleep) on any screen; walking is smooth everywhere
+    const gap = ((lay && !lay.desktop) || !moving) ? 31 : 0;
+    if (now - last < gap) { raf = requestAnimationFrame(tick); return; }
+    const raw = (now - last) / 1000, dt = Math.min(0.1, raw || 0.016); last = now;
     for (const ac of actors.values()) {
       if (ac.state === 'exit') { ac.exitT -= dt; if (ac.exitT <= 0) { ac.state = 'walk'; ac.path = ac.pendingPath || []; ac.pendingPath = null; } }
       else if (ac.state === 'walk') {
@@ -144,20 +220,27 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
         else {
           const dx = tgt.x - ac.x, dy = tgt.y - ac.y, d = Math.hypot(dx, dy), step = 1.25 * dt / mpf(ac.x, ac.y);
           if (d <= step) { ac.x = tgt.x; ac.y = tgt.y; ac.path.shift(); } else { ac.x += dx / d * step; ac.y += dy / d * step; }
-          if (d > 1e-6) ac.dir = { x: dx / d * 0.02, y: dy / d * 0.02 };
+          if (d > 1e-6) { const dr = ac.dir || (ac.dir = { x: 0, y: 0 }); dr.x = dx / d * 0.02; dr.y = dy / d * 0.02; }
         }
       }
       if (ac.hop > 0) ac.hop = Math.max(0, ac.hop - dt / 0.7);
       const st = status.get(ac.id), spk = (speakUntil.get(ac.id) || 0) > now;
-      poses.set(ac.id, { fx: ac.x, fy: ac.y, mode: ac.state === 'sit' ? 'sit' : ac.state === 'exit' ? 'exit' : ac.state === 'walk' ? 'walk' : 'stand',
-        dirX: ac.dir?.x, dirY: ac.dir?.y, lookX: ac.look?.x, lookY: ac.look?.y, speaking: spk, night, typing: st === 'working' || st === 'typing', hop: ac.hop });
+      let po = poses.get(ac.id); if (!po) poses.set(ac.id, po = {});   // one reused pose object per person
+      po.fx = ac.x; po.fy = ac.y; po.mode = ac.state === 'sit' ? 'sit' : ac.state === 'exit' ? 'exit' : ac.state === 'walk' ? 'walk' : 'stand';
+      po.dirX = ac.dir?.x; po.dirY = ac.dir?.y; po.lookX = ac.look?.x; po.lookY = ac.look?.y; po.speaking = spk; po.night = night; po.typing = st === 'working' || st === 'typing'; po.hop = ac.hop;
     }
     if (stage) { stage.resize(box); stage.frame(dt, poses, night, now / 1000); }
     for (const ac of actors.values()) pillFor(ac);
+    // adaptive quality: when frames keep running long, give back pixel ratio (then stop adapting)
+    if (stage && stage.ready) {
+      if (!perfT0) perfT0 = now;
+      if (now - perfT0 > 2500) { perfAcc += raw; perfN++; if (perfAcc > 2.5) { const avg = perfAcc / perfN; perfAcc = 0; perfN = 0; if (avg > (moving ? 1 / 22 : 1 / 20)) stage.lowerQuality(); } }
+    }
     raf = requestAnimationFrame(tick);
   }
-  function kick() { if (!raf && !document.hidden) { last = performance.now(); raf = requestAnimationFrame(tick); } }
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', kick);
+  function kick() { if (!raf && !document.hidden && onScreen) { last = performance.now(); raf = requestAnimationFrame(tick); } }
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { perfAcc = 0; perfN = 0; kick(); });
+  if (typeof IntersectionObserver === 'function') new IntersectionObserver(es => { const v = es[es.length - 1].isIntersecting; if (v !== onScreen) { onScreen = v; perfAcc = 0; perfN = 0; if (v) kick(); } }).observe(root);
 
   /** walk to a spot; a person who is sitting stands up first and goes round the desk by its side */
   function walkTo(ac, spot, { after = 'stand', onArrive = null, look = null } = {}) {
@@ -182,7 +265,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
   function leaveSeat(ac) { ac.away = true; }
 
   /* ---------- scenes ---------- */
-  const convoQ = []; let convoBusy = false;
+  const convoQ = []; let convoBusy = false, talkers = [];
   function converse(spec) {
     const ids = [...new Set((spec.participants || []).concat((spec.lines || []).map(l => l.agent)))].filter(id => actors.has(id) && !actors.get(id).busy);
     const lines = (spec.lines || []).filter(l => l && l.text && actors.has(l.agent));
@@ -191,6 +274,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
     if (convoBusy) { if (convoQ.length < 3) convoQ.push(spec); return true; }
     convoBusy = true;
     const members = ids.map(id => actors.get(id));
+    talkers = ids.slice();
     const cx = members.reduce((s, a) => s + SEATS[a.seat].fx, 0) / members.length, cy = members.reduce((s, a) => s + SEATS[a.seat].fy, 0) / members.length;
     const spot = SPOTS.talk.slice().sort((a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy))[0];
     let arrived = 0;
@@ -203,7 +287,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
     function speak() {
       let t = 500;
       lines.forEach(l => { setTimeout(() => { say(l.agent, l.text, 3000); onLine(l.agent, l.text); }, t); t += 2900; });
-      setTimeout(() => { let back = 0; members.forEach(ac => goSeat(ac, () => { ac.busy = null; if (++back === members.length) { convoBusy = false; const nx = convoQ.shift(); if (nx) converse(nx); } })); }, t + 900);
+      setTimeout(() => { let back = 0; members.forEach(ac => goSeat(ac, () => { ac.busy = null; if (++back === members.length) { convoBusy = false; talkers = []; const nx = convoQ.shift(); if (nx) converse(nx); } })); }, t + 900);
     }
     return true;
   }
@@ -212,6 +296,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
     ac.busy = 'bell'; leaveSeat(ac);
     walkTo(ac, SPOTS.bell, { after: 'stand', look: { x: SPOTS.bell.x + 0.06, y: SPOTS.bell.y - 0.035 }, onArrive: () => {
       ring(id); root.classList.add('bell-shake'); setTimeout(() => root.classList.remove('bell-shake'), 1500);
+      onStrike(0.8); setTimeout(() => onStrike(1), 650); // two strikes of the gong
       if (label) say(id, label, 3000);
       setTimeout(() => goSeat(ac, () => { ac.busy = null; }), 2600);
     } });
@@ -239,7 +324,7 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
   /* ---------- pills, bubbles, layout ---------- */
   function place() {
     if (!recalc()) return;
-    for (const el of [dayImg, nightImg]) if (el) el.style.cssText = `left:${box.x.toFixed(1)}px;top:${box.y.toFixed(1)}px;width:${box.w.toFixed(1)}px;height:${box.h.toFixed(1)}px`;
+    for (const el of [dayImg, nightImg]) if (el) { const st = el.style; st.left = box.x.toFixed(1) + 'px'; st.top = box.y.toFixed(1) + 'px'; st.width = box.w.toFixed(1) + 'px'; st.height = box.h.toFixed(1) + 'px'; }
     document.body.style.setProperty('--pz', lay.desktop ? Math.max(0.7, Math.min(1.15, lay.u)).toFixed(3) : '1');
     root.style.setProperty('--cvu', Math.max(0.62, Math.min(1.1, lay.desktop ? lay.u : 0.8)).toFixed(3));
     if (stage) stage.resize(box);
@@ -257,35 +342,42 @@ export function createConcept(root, { esc = s => String(s), onLine = () => {} } 
     }
     if (stage) stage.setCast(cast, seats);
     pillsEl.innerHTML = cast.map(a => `<div class="cv-tag" data-id="${esc(a.id)}" data-seat="${seats.get(a.id)}" data-st="${status.get(a.id) || 'working'}" style="--ac:${esc(a.color)}"><i></i><span class="nm">${esc(a.name)}</span><span class="zz" aria-hidden="true">z</span></div>`).join('');
+    tagEls.clear(); bubEls.clear();
+    pillsEl.querySelectorAll('.cv-tag').forEach(el => tagEls.set(el.dataset.id, el));
+    buildDots();
     place();
   }
   function setStatus(id, st) {
     status.set(id, st);
-    const el = pillsEl.querySelector(`[data-id="${CSS.escape(id)}"]`); if (el) el.dataset.st = st;
+    const el = tagEls.get(id); if (el) el.dataset.st = st;
     kick();
   }
   function say(id, text, ms = 3600) {
     const ac = actors.get(id); if (!ac || !text) return false;
     clearTimeout(timers.get(id));
     speakUntil.set(id, performance.now() + Math.min(ms, 4200));
-    let b = pillsEl.querySelector(`.cv-bub[data-for="${CSS.escape(id)}"]`);
-    if (!b) { b = document.createElement('div'); b.className = 'cv-bub'; b.dataset.for = id; pillsEl.appendChild(b); }
-    b.textContent = text;
+    let b = bubEls.get(id);
+    if (!b) { b = document.createElement('div'); b.className = 'cv-bub'; b.dataset.for = id; pillsEl.appendChild(b); bubEls.set(id, b); }
+    b.textContent = text; b._w = b.offsetWidth || 160; b._kx = null; // measured once per line, never per frame
     pillFor(ac);
     requestAnimationFrame(() => b.classList.add('on'));
-    timers.set(id, setTimeout(() => { b.classList.remove('on'); setTimeout(() => b.remove(), 300); }, ms));
+    timers.set(id, setTimeout(() => { b.classList.remove('on'); setTimeout(() => { b.remove(); if (bubEls.get(id) === b) bubEls.delete(id); }, 300); }, ms));
     kick();
     return true;
   }
   function ring(id) {
-    const el = pillsEl.querySelector(`.cv-tag[data-id="${CSS.escape(id)}"]`); if (!el) return;
+    const el = tagEls.get(id); if (!el) return;
     el.classList.remove('ring'); void el.offsetWidth; el.classList.add('ring'); setTimeout(() => el.classList.remove('ring'), 2600);
   }
-  function setNight(n) { night = n; kick(); }
+  function setNight(n) {
+    night = n;
+    if (n > 0.01 && !nightLoaded && nightImg) { nightLoaded = true; nightImg.style.backgroundImage = `url(${ROOM_NIGHT})`; } // the night picture is fetched the first time it is needed
+    kick();
+  }
   function setZoom(z) { zoom = Math.max(1, Math.min(2.2, z)); place(); }
   function setPan(p) { pan = Math.max(-0.3, Math.min(0.3, p)); place(); }
   const ro = new ResizeObserver(() => { place(); });
   ro.observe(root);
   return { setCast, setStatus, say, ring, place, setZoom, getZoom: () => zoom, setPan, getPan: () => pan, seatOf: id => seats.get(id), converse, bell, coffee, gather, hop, setNight,
-    actorState: id => { const a = actors.get(id); return a ? { state: a.state, x: a.x, y: a.y, busy: a.busy } : null; }, get cast() { return cast; }, get stage() { return stage; }, get cast3d() { return stage ? [...stage.chars.keys()] : []; } };
+    talking: () => talkers.slice(), get fallback() { return fallback; }, actorState: id => { const a = actors.get(id); return a ? { state: a.state, x: a.x, y: a.y, busy: a.busy } : null; }, get cast() { return cast; }, get stage() { return stage; }, get cast3d() { return stage ? [...stage.chars.keys()] : []; } };
 }

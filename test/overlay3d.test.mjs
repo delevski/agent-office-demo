@@ -7,7 +7,7 @@ import { assignSlots, SEATS, SLOTS } from '../concept.js';
 
 const read = f => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const roster = JSON.parse(read('roster.json'));
-const stage = read('stage3d.js'), concept = read('concept.js'), css = read('concept.css'), main = read('main.js');
+const stage = read('src3d/stage3d.js'), concept = read('concept.js'), css = read('concept.css'), main = read('main.js');
 
 test('assets: one rigged glb with the clips the scenes need, loader files vendored, small', () => {
   const glb = new URL('../assets/models/agent.glb', import.meta.url);
@@ -20,9 +20,9 @@ test('assets: one rigged glb with the clips the scenes need, loader files vendor
   assert.equal(json.skins.length, 1, 'one skeleton');
   assert.ok(json.skins[0].joints.length >= 60, 'a full humanoid rig');
   assert.ok(buf.length < 2.8 * 1024 * 1024, 'glb under the blob limit: ' + buf.length);
-  for (const f of ['vendor/GLTFLoader.js', 'vendor/SkeletonUtils.js', 'vendor/BufferGeometryUtils.js', 'assets/models/LICENSE-quaternius-cc0.txt']) assert.ok(existsSync(new URL('../' + f, import.meta.url)), f);
+  for (const f of ['src3d/vendor/GLTFLoader.js', 'src3d/vendor/SkeletonUtils.js', 'src3d/vendor/BufferGeometryUtils.js', 'src3d/vendor/meshopt_decoder.module.js', 'stage3d.min.js', 'assets/models/LICENSE-quaternius-cc0.txt']) assert.ok(existsSync(new URL('../' + f, import.meta.url)), f);
   assert.match(read('assets/models/LICENSE-quaternius-cc0.txt'), /CC0/);
-  let total = 0; for (const f of ['assets/models/agent.glb', 'vendor/GLTFLoader.js', 'vendor/SkeletonUtils.js', 'vendor/BufferGeometryUtils.js', 'stage3d.js', 'concept-calib.js']) total += statSync(new URL('../' + f, import.meta.url)).size;
+  let total = 0; for (const f of ['assets/models/agent.glb', 'stage3d.min.js', 'concept-calib.js']) total += statSync(new URL('../' + f, import.meta.url)).size;
   assert.ok(total < 8 * 1024 * 1024, 'new assets under 8 MB');
 });
 
@@ -59,11 +59,11 @@ test('the cast follows the roster: demo names in demo, the live roster (<= 6) in
 });
 
 test('the overlay is a transparent canvas over the plate, with performance caps', () => {
-  assert.match(stage, /alpha: true/); assert.match(stage, /Math\.min\(window\.devicePixelRatio \|\| 1, box\.w < 700 \? 1\.5 : maxDpr\)/);
+  assert.match(stage, /alpha: true/); assert.match(stage, /Math\.min\(window\.devicePixelRatio \|\| 1, maxDpr\)/); assert.match(stage, /maxDpr = 1\.5/);
   assert.match(stage, /colorWrite: false/, 'invisible desks hide legs by depth');
   assert.match(stage, /powerPreference: 'low-power'/);
   assert.match(concept, /document\.hidden/, 'no rendering in a hidden tab');
-  assert.match(concept, /~30 fps/, 'phones are capped');
+  assert.match(concept, /~30 fps/, 'phones and calm rooms are capped');
 });
 
 test('motion is skeletal: walk, sit down, stand up, talk, typing and pyjamas', () => {

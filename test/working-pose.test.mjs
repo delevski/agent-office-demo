@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seatedOverlay } from '../stage3d.js';
+import { seatedOverlay } from '../src3d/stage3d.js';
 import { applyReport, publicView } from '../office-state.js';
 
 test('working pose stays typing at noon, dusk and midnight; idle alone can sleep', () => {

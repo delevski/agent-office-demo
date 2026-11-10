@@ -1,7 +1,7 @@
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
-import { createOffice } from './office.js?v=25';
-import { createConcept } from './concept.js?v=3';
+import { createRoomCore } from './room-core.js?v=1';
+import { createConcept } from './concept.js?v=4';
 import { createBell } from './sound.js';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
@@ -77,8 +77,6 @@ async function loadRoster() {
 
 /* ---------------- concept view: the approved room picture + live pills, bubbles and the right-hand panel ---------------- */
 let cv = null, chatLog = [];
-const CV_KEY = 'view';
-const wantCV = () => (QS.get('view') || LS.get(CV_KEY, 'room')) !== '3d';
 const isDesktop = () => matchMedia('(min-width:901px)').matches;
 function castNow() { return mode === 'live' ? LIVE : AGENTS; }
 let cvMode = '';
@@ -93,14 +91,6 @@ function syncCast() {
   cv.setCast(castNow());
   castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
   renderCPanel();
-}
-function setView(room) {
-  document.body.classList.toggle('cvx', room);
-  office?.setRenderPaused(room);
-  $('#btn-view3d')?.setAttribute('aria-pressed', room ? 'false' : 'true');
-  LS.set(CV_KEY, room ? 'room' : '3d');
-  if (room) { drawerOpen = false; applyDrawer(false); } else { drawerOpen = isDesktop(); applyDrawer(false); }
-  requestAnimationFrame(() => cv?.place());
 }
 function cpOpen(open) {
   document.body.classList.toggle('cp-closed', !open);
@@ -145,25 +135,15 @@ function renderCPanel() {
   $('#cp-chat').innerHTML = lines.length ? lines.map(l => `<div class="cm">${chip(l.a)}<span class="cb">${esc(l.text)}</span></div>`).join('') : '<div class="muted">כשסוכנים ידברו, השיחה תופיע כאן</div>';
 }
 function initConcept() {
-  cv = window.__cv = createConcept($('#cv'), { esc, onLine: (id, text) => {
-    const a = castNow().find(x => x.id === id); if (!a) return;
-    chatLog.push({ a, text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel();
-  } });
-  // keep the live scene's logic in charge; mirror it onto the picture: the people walk, talk, ring the gong and sleep
-  const o = office, orig = {};
-  for (const k of ['converse', 'setStatus', 'ringBell', 'celebrate', 'coffeeBreak', 'gatherAll', 'disperseAll', 'micro']) orig[k] = o[k]?.bind(o);
-  o.converse = spec => { const ok = orig.converse(spec); cv.converse(spec); return ok; };
-  o.setStatus = (id, st) => { cv.setStatus(id, st); return orig.setStatus(id, st); };
-  o.ringBell = (id, label) => { cv.bell(id, label); return orig.ringBell(id, label); };
-  o.celebrate = id => { cv.hop(id); cv.ring(id); return orig.celebrate(id); };
-  o.coffeeBreak = (id, secs) => { const ok = orig.coffeeBreak(id, secs); if (ok) cv.coffee(id, secs); return ok; };
-  o.gatherAll = () => { cv.gather(true); return orig.gatherAll(); };
-  o.disperseAll = () => { cv.gather(false); return orig.disperseAll(); };
-  document.body.classList.toggle('cvx', wantCV());
-  office.setRenderPaused(wantCV());
-  $('#btn-view3d')?.setAttribute('aria-pressed', wantCV() ? 'false' : 'true');
+  cv = window.__cv = createConcept($('#cv'), { esc,
+    avatar: a => emblemSVG(a, 40, { title: false }),
+    onStrike: strength => { bellSound.ring(strength, strength < 0.9 ? -2 : 0); window.__bellStrikes.push({ clock: +(performance.now() / 1000).toFixed(2), strength }); },
+    onLine: (id, text) => {
+      const a = castNow().find(x => x.id === id); if (!a) return;
+      chatLog.push({ a, text }); if (chatLog.length > 12) chatLog.shift(); renderCPanel();
+    } });
   cpOpen(isDesktop() && LS.get('cpanel', '1') !== '0');
-  if (wantCV()) { drawerOpen = false; applyDrawer(false); }
+  drawerOpen = false; applyDrawer(false);
   syncCast();
   // the first screen is a believable moment in the day (demo only)
   if (mode === 'demo' && !QS.get('quiet')) {
@@ -176,22 +156,18 @@ function initConcept() {
   // controls
   $('#cp-close').addEventListener('click', () => cpOpen(false));
   $('#cp-add').addEventListener('click', () => { if (mode === 'live') $('#btn-assign')?.click(); else { openAssignDemo(); } });
-  $('#btn-view3d').addEventListener('click', () => setView(!document.body.classList.contains('cvx')));
   $('#btn-agents').addEventListener('click', () => { drawerOpen = !drawerOpen; LS.set('drawer', drawerOpen ? '1' : '0'); applyDrawer(); });
-  // zoom / reset act on the picture while it is the scene (captured before the 3D handlers)
-  const cvOnly = fn => e => { if (!document.body.classList.contains('cvx')) return; e.stopImmediatePropagation(); e.preventDefault(); fn(e); };
-  $('#btn-zoomin').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() * 1.25)), true);
-  $('#btn-zoomout').addEventListener('click', cvOnly(() => cv.setZoom(cv.getZoom() / 1.25)), true);
-  $('#btn-resetcam').addEventListener('click', cvOnly(() => { cv.setPan(0); cv.setZoom(1); }), true);
-  $('#btn-rotl')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() + 0.06)), true);
-  $('#btn-rotr')?.addEventListener('click', cvOnly(() => cv.setPan(cv.getPan() - 0.06)), true);
+  // zoom / reset act on the room picture
+  $('#btn-zoomin').addEventListener('click', () => cv.setZoom(cv.getZoom() * 1.25));
+  $('#btn-zoomout').addEventListener('click', () => cv.setZoom(cv.getZoom() / 1.25));
+  $('#btn-resetcam').addEventListener('click', () => { cv.setPan(0); cv.setZoom(1); });
   $('#btn-board').addEventListener('click', e => {
-    if (!document.body.classList.contains('cvx') || !isDesktop()) return;
+    if (!isDesktop()) return;
     e.stopImmediatePropagation(); e.preventDefault();
     cpOpen(document.body.classList.contains('cp-closed'));
   }, true);
   const demoGate = id => $(id)?.addEventListener('click', e => {
-    if (mode === 'live' || !document.body.classList.contains('cvx')) return;
+    if (mode === 'live') return;
     e.stopImmediatePropagation(); e.preventDefault();
     toast('זמין במצב חי אחרי כניסה');
   }, true);
@@ -202,25 +178,16 @@ function openAssignDemo() { toast('משימות חדשות נשלחות במצב
 async function boot() {
   $('#boot-error').classList.add('hidden');
   try {
-    bootSet(15, 'טוען מנוע תלת־ממד…');
-    await delay(100);
     bootSet(35, 'קורא סגל סוכנים…');
     const doc = await loadRoster();
     AGENTS = doc.agents;
     bootSet(55, 'בונה את המשרד…');
-    // canvas textures (name tags, board, shelves) need the Hebrew webfont before they are drawn
-    try { await Promise.race([Promise.all(['800 40px Heebo', '900 40px Heebo', '600 28px Heebo'].map(f => document.fonts.load(f))), delay(2500)]); } catch { /* fallback font */ }
-    office = createOffice($('#scene'), AGENTS, {
-      onSelect: id => { if (!SHOWCASE) selectAgent(id, true); },
-      onBoard: () => { if (!SHOWCASE) openBoard(); },
-      onShelf: () => { if (!SHOWCASE) openShelves(); },
-      onFrame: (dt, t) => { simFrame(dt, t); lifeFrame(dt); },
-      onBell: () => { if (!SHOWCASE) manualRing(); },
-      onBellStrike: strength => { bellSound.ring(strength, strength < 0.9 ? -2 : 0); window.__bellStrikes.push({ clock: +office.camera().t, strength }); },
-      onTimeOfDay: onTimeOfDay,
-    }, { showcase: SHOWCASE, capture: CAPTURE, adaptive: QS.get('quality') !== 'fixed', loopSeconds: Number(QS.get('loop')) || 12, time: QS.get('time') || '' });
-    window.__office = office;
     initConcept();
+    office = createRoomCore(cv, {
+      onFrame: (dt, t) => { simFrame(dt, t); lifeFrame(dt); },
+      onTimeOfDay: onTimeOfDay,
+    }, { time: QS.get('time') || '' });
+    window.__office = office;
     applyDrawer(false);
     if (!SHOWCASE) (doc.live || []).forEach(meta => addLiveCharacter({ ...meta, live: true }));
     initDemoBoard();
@@ -287,8 +254,6 @@ function setPill() {
 }
 // Live mode = real agents only, and only after Ori logs in. Demo mode = the built-in simulation.
 function showCast() {
-  AGENTS.forEach(a => office.setVisible(a.id, mode === 'demo'));
-  LIVE.forEach(a => office.setVisible(a.id, mode === 'live'));
   document.body.classList.toggle('is-live', mode === 'live');
   $('#badge-mode').textContent = mode === 'live' ? 'חי' : 'דמו';
   syncCast();
@@ -296,7 +261,7 @@ function showCast() {
   $('#log-sub').textContent = mode === 'live' ? 'אירועים אמיתיים שהסוכנים מדווחים' : 'טבלת דמו · כל שורה מזיזה דמות';
   $('#foot-demo').classList.toggle('hidden', mode === 'live');
   $('#foot-live').classList.toggle('hidden', mode !== 'live');
-  if (office) refreshAlerts();
+  refreshAlerts();
 }
 function resetBoard() {
   selectedId = null;
@@ -474,12 +439,7 @@ function refreshAgentViews(a) {
   if (selectedId === a.id && window.innerWidth <= 900 && !$('#sheet').classList.contains('hidden')) renderPanel(a);
   if (!selectedId) renderPanelDefault();
 }
-function updateWallScreen() {
-  const list = roster();
-  office.updateScreen(
-    list.map(x => ({ v: statOf(x.id).events, color: x.color })),
-    list.reduce((s, x) => s + statOf(x.id).events, 0));
-}
+function updateWallScreen() { /* the wall screen was a prop of the old 3D office; the numbers live in the panel now */ }
 
 /* ---------------- chart ---------------- */
 const chartData = Array.from({ length: 30 }, () => rnd(0, 5)); // fictional demo history
@@ -545,7 +505,6 @@ function connectLive() {
       if (m.type === 'event' && m.event) onLiveEvent(m.event);
       if (m.type === 'agent' && m.agent) onAgentUpdate(m.agent);
       if (m.type === 'review' && m.review) onReview(m.review);
-      if (m.type === 'handoff' && m.handoff && !replay.active && mode === 'live') office.handoff(m.handoff.from, m.handoff.to);
       if (m.type === 'change' && m.change) onChange(m.change);
     } catch {}
   };
@@ -610,7 +569,6 @@ function onAgentUpdate(view, { quiet = false, replaying = false } = {}) {
   st.events = Math.max(st.events, view.events || 0);
   if (view.current?.title) st.last = view.current.title;
   office.setStatus(a.id, sceneStatus(view));
-  office.setActivity(a.id, view.activity?.text || '');
   applyAlert(a);
   scheduleMeetings();
   refreshWorld();
@@ -627,9 +585,7 @@ function liveAgentFor(id, name) {
 function addLiveCharacter(meta) {
   meta.seatIndex = LIVE.length < 6 ? LIVE.length : undefined; // sit at a hidden demo desk
   LIVE.push(meta);
-  office.addAgent(meta);
   office.setStatus(meta.id, sceneStatus(liveState.get(meta.id)));
-  office.setVisible(meta.id, mode === 'live');
   statOf(meta.id);
   syncCast();
   return meta;
@@ -790,13 +746,11 @@ function alertBannerHtml() {
 }
 function applyAlert(a) {
   const al = mode === 'live' ? alertOf(liveState.get(a.id)) : null;
-  office.setAlert(a.id, al ? { kind: al.kind, label: alertLabel(al) } : null);
   if (al && alertShown.get(a.id) !== al.kind && mode === 'live' && !replay.active) toast(`${a.name}: ${al.kind === 'stuck' ? 'תקוע' : 'שקט'} ${durationHe(al.minutes)}`, { err: true });
   if (al) alertShown.set(a.id, al.kind); else alertShown.delete(a.id);
   return al;
 }
 function refreshAlerts() {
-  if (!office) return;
   let n = 0;
   for (const a of LIVE) if (applyAlert(a)) n++;
   const nav = document.querySelector('.navbtn[data-view="view-agents"]');
@@ -1010,7 +964,6 @@ function scheduleMeetings() { if (!meetTimer) meetTimer = setTimeout(() => { mee
 function refreshMeetings() {
   if (!office) return;
   const groups = mode === 'live' ? meetingGroups(LIVE.map(a => liveState.get(a.id)).filter(Boolean)) : [];
-  office.meetGroups(groups); // idempotent: only agents whose table changed get up
   const sig = JSON.stringify(groups);
   if (sig === lastMeetSig) return;
   const before = lastMeetSig ? JSON.parse(lastMeetSig) : [];
@@ -1103,8 +1056,6 @@ function replayApply(r, animate) {
   if (animate) {
     logLine(a, r.kind, r.value || '', feedNote(r), r.ts);
     if (r.kind === 'task.done' && r.taskStatus !== 'failed') office.celebrate(a.id);
-    if (r.kind === 'handoff' && r.handoff) office.handoff(r.handoff.from, r.handoff.to);
-    if (r.from_agent && /^task\.(start|queued)$/.test(r.kind)) office.handoff(r.from_agent, r.agent);
   }
 }
 function replaySeek(t) {
@@ -1291,8 +1242,7 @@ function fireEvent() {
   applyEventToOffice(a, kind, markerVal(marker), he);
 }
 
-// The simulation runs on the 3D scene's clock (office onFrame), so it pauses with the tab,
-// honours the speed button, and steps deterministically when frames are captured for video.
+// The simulation runs on the room clock (room-core onFrame), so it pauses with the tab and honours the speed button.
 let simClock = 0, simNext = Infinity, nextCoffee = 6;
 const simJobs = [];
 function simAfter(sec, fn) { simJobs.push({ at: simClock + sec, fn }); }
@@ -1371,7 +1321,6 @@ $('#btn-resetcam').addEventListener('click', e => {
     renderPanelDefault();
   });
 });
-$('#scene-retry').addEventListener('click', () => location.reload());
 
 /* ---------------- the world: kanban board + skills shelves (3D + readable 2D overlays) ---------------- */
 // Demo board: each demo character works through its own clearly-labelled sample tasks.
@@ -1454,10 +1403,10 @@ function refreshWorld(now = false) {
   if (!now) { if (!worldTimer) worldTimer = setTimeout(() => { worldTimer = null; refreshWorld(true); }, 400); return; }
   const bd = boardData();
   const sig = JSON.stringify([bd.demo, Object.values(bd.columns).map(c => c.map(x => x.title + x.agent.id + x.status + JSON.stringify(x.board || {})))]);
-  if (sig !== lastBoardSig) { lastBoardSig = sig; office.updateBoard(bd); if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); }
+  if (sig !== lastBoardSig) { lastBoardSig = sig; if (!$('#board-ov').classList.contains('hidden')) renderBoardOverlay(); }
   const rows = shelfRows();
   const ssig = JSON.stringify(rows.map(r => [r.meta.id, r.skills, r.nodata]));
-  if (ssig !== lastShelfSig) { lastShelfSig = ssig; office.updateShelves(rows); if (!$('#shelf-ov').classList.contains('hidden')) renderShelfOverlay(); }
+  if (ssig !== lastShelfSig) { lastShelfSig = ssig; if (!$('#shelf-ov').classList.contains('hidden')) renderShelfOverlay(); }
 }
 
 let lastFocus = null, overlayOpenedAt = 0;
@@ -1519,17 +1468,15 @@ document.querySelectorAll('.overlay').forEach(ov => ov.addEventListener('click',
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay:not(.hidden)').forEach(ov => closeOverlay('#' + ov.id));
 });
-$('#btn-board').addEventListener('click', () => { office?.focusBoard(); openBoard(); });
-$('#btn-shelves').addEventListener('click', () => { office?.focusShelf(); openShelves(); });
+$('#btn-board').addEventListener('click', () => openBoard());
+$('#btn-shelves').addEventListener('click', () => openShelves());
 $('#btn-reviews').addEventListener('click', () => openReviews(null));
-$('#btn-zoomin').addEventListener('click', () => office?.zoomBy(0.75));
-$('#btn-zoomout').addEventListener('click', () => office?.zoomBy(1.33));
 document.addEventListener('keydown', e => { if (e.key === 'Tab') document.body.classList.add('kbd'); });
 document.addEventListener('pointerdown', () => document.body.classList.remove('kbd'));
-$('#scene').addEventListener('keydown', e => {
-  if (e.key === '+' || e.key === '=') { office?.zoomBy(0.8); e.preventDefault(); }
-  else if (e.key === '-' || e.key === '_') { office?.zoomBy(1.25); e.preventDefault(); }
-  else if (e.key === '0') { office?.resetCam(); e.preventDefault(); }
+$('#cv').addEventListener('keydown', e => { // the room picture is focusable: + / - zoom, 0 resets
+  if (e.key === '+' || e.key === '=') { cv?.setZoom(cv.getZoom() * 1.25); e.preventDefault(); }
+  else if (e.key === '-' || e.key === '_') { cv?.setZoom(cv.getZoom() / 1.25); e.preventDefault(); }
+  else if (e.key === '0') { cv?.setPan(0); cv?.setZoom(1); e.preventDefault(); }
 });
 
 /* ---------------- mobile tabs ---------------- */
@@ -1645,7 +1592,6 @@ function applyDrawer(animate = true) {
   btn.setAttribute('aria-expanded', String(drawerOpen));
   btn.title = drawerOpen ? 'סגירת הפאנל' : 'פתיחת הפאנל';
   const desktop = window.innerWidth > 900;
-  office?.setInset(desktop ? (drawerOpen ? 396 : 72) : 0);
   if (drawerOpen && desktop) setTimeout(drawChart, animate ? 340 : 0);
   renderStrip();
 }
@@ -1800,14 +1746,6 @@ document.querySelectorAll('#ac-time [data-time]').forEach(b => b.addEventListene
   office?.setTime(b.dataset.time === 'real' ? null : b.dataset.time);
   renderActions(); renderStrip();
 }));
-
-/* ---- camera: rotate buttons + arrow keys (the room turns all the way round) ---- */
-$('#btn-rotl')?.addEventListener('click', () => office?.rotateBy(-Math.PI / 4));
-$('#btn-rotr')?.addEventListener('click', () => office?.rotateBy(Math.PI / 4));
-$('#scene').addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft') { office?.rotateBy(-0.25); e.preventDefault(); }
-  else if (e.key === 'ArrowRight') { office?.rotateBy(0.25); e.preventDefault(); }
-});
 
 setPill();
 boot();

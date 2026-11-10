@@ -5,6 +5,10 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "dev": "npx wrangler dev",
-    "deploy": "npx wrangler deploy"
+    "deploy": "npx wrangler deploy",
+    "build": "node scripts/build-stage.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2"
   }
 }

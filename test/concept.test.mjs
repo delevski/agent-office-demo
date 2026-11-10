@@ -59,12 +59,15 @@ test('layout: desktop is the 1600x1000 concept frame scaled; phones fill the wid
 
 test('the concept chrome: room picture, panel open by default, dock, tools, pills layer', () => {
   assert.ok(existsSync(new URL('../assets/office-room-day.jpg', import.meta.url)) && existsSync(new URL('../assets/office-room-night.jpg', import.meta.url)));
-  for (const id of ['cv', 'cv-pills', 'cpanel', 'cp-cols', 'cp-review', 'cp-chat', 'cp-add', 'cp-close', 'btn-view3d', 'btn-agents']) assert.match(html, new RegExp(`id="${id}"`), id);
+  for (const id of ['cv', 'cv-pills', 'cpanel', 'cp-cols', 'cp-review', 'cp-chat', 'cp-add', 'cp-close', 'btn-agents']) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(html, /concept\.css/);
   assert.match(main, /cpOpen\(isDesktop\(\) && LS\.get\('cpanel', '1'\) !== '0'\)/, 'the panel opens by default on desktop');
   for (const v of ['width:560px', 'top:84px', 'border-radius:30px', 'backdrop-filter:blur(40px)', 'bottom:26px', 'border-radius:26px', 'height:48px', '#0a84ff']) assert.ok(css.includes(v), v);
-  // the real 3D room stays one tap away
-  assert.match(main, /setView\(!document\.body\.classList\.contains\('cvx'\)\)/);
+  // the room is the only view: the old 3D office, its cube toggle and rotate buttons are gone
+  assert.match(html, /<body class="cvx">/);
+  for (const gone of ['btn-view3d', 'btn-rotl', 'btn-rotr', 'id="scene"']) assert.ok(!html.includes(gone), gone);
+  assert.ok(!existsSync(new URL('../office.js', import.meta.url)), 'office.js is removed');
+  assert.doesNotMatch(main, /createOffice|setView\(|wantCV|CV_KEY|view3d|btn-rot|#scene/);
 });
 
 test('no emoji as UI icons in the concept chrome', () => {
@@ -75,7 +78,7 @@ test('no emoji as UI icons in the concept chrome', () => {
 test('the board, review row and chat in the panel are rendered from the same data as the board overlay', () => {
   assert.match(main, /function renderCPanel\(\)[\s\S]*boardData\(\)/);
   assert.match(main, /reviews\[reviews\.length - 1\]/);
-  assert.match(main, /o\.converse = spec =>/);
+  assert.match(main, /createRoomCore\(cv,/);
 });
 
 test('motion: every seat has a place behind its desk, and paths between seats and spots stay on the floor', () => {
@@ -89,9 +92,11 @@ test('motion: every seat has a place behind its desk, and paths between seats an
   }
 });
 
-test('motion: the concept view is driven by the same calls as the 3D office (converse, bell, coffee, gather, night)', () => {
-  for (const call of ['o.converse = spec =>', 'o.ringBell = (id, label) =>', 'o.coffeeBreak =', 'o.gatherAll =', 'o.disperseAll =', 'cv.setNight(info.night)']) assert.ok(main.includes(call), call);
-  assert.match(main, /setRenderPaused\(/);
+test('motion: the dashboard drives the room through the room core (converse, bell, coffee, gather, night)', () => {
+  const core = readFileSync(new URL('../room-core.js', import.meta.url), 'utf8');
+  for (const call of ['converse: spec => cv.converse', 'cv.bell(id, label)', 'coffeeBreak: (id, secs) => cv.coffee', 'gatherAll: () => cv.gather(true)', 'disperseAll: () => cv.gather(false)']) assert.ok(core.includes(call), call);
+  assert.match(main, /cv\.setNight\(info\.night\)/);
+  assert.match(main, /onStrike: strength => \{ bellSound\.ring/, 'the gong sound plays when the person hits the gong');
 });
 
 test('switching to live mode clears the demo conversation from the panel (live shows live data only)', () => {

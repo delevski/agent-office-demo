@@ -25,12 +25,12 @@ Running several AI agents (Claude, GPT, Hermes and others) leaves you reading lo
 ## v6: a living room
 
 - **Full-screen room + drawer.** The room fills the screen; the side panel is a drawer (‹ / ›) and leaves a narrow strip with the key numbers (connected, tasks today, events, bell rings, room clock) and one dot per agent when closed. Its state is remembered.
-- **Real time of day.** The wall clock, the TV corner, the light, the windows and the sky behind the room follow the viewer's clock: dawn, day, dusk and night (stars, a night skyline, desk lamps on, agents in pajamas and nightcaps). Debug: `?time=22:00` fixes the room's clock, `?time=cycle:60` runs a whole day in 60 s (also in ⚡ → "שעה בחדר").
+- **Real time of day.** The room follows the viewer's clock: dawn, day, dusk and night (the night picture fades in, the page theme follows, agents who are not working put on pyjamas and sleep; working agents stay awake and keep typing). Debug: `?time=22:00` fixes the room's clock, `?time=cycle:60` runs a whole day in 60 s (also in ⚡ → "שעה בחדר").
 - **The bell.** On `task.done` (not failed) and on the new `pr.opened`, the agent gets up, walks to the bell in the front-right corner and rings it twice. The sound is synthesized with WebAudio (`sound.js`, no audio files); there is an in-app toast, and a browser notification when the page is in the background (🔔 in the top bar asks for permission; 🔊 mutes). Browsers allow sound only after the first tap on the page.
 - **Conversations.** `chat.exchange` (e.g. a Slack thread where agents agreed on something) makes the participants walk together and talk in speech bubbles, ending with 🤝 when `agreed` is true. Demo mode plays scripted conversations; live mode, with "חיים במשרד" on, only adds rare emoji small talk (no invented content).
 - **Idle life.** Stretching, sipping coffee, looking around, leaning back, yawning at night.
 - **Actions (⚡).** Ring the bell, coffee break, stretch, celebrate, a short chat, team meeting, everyone back to desks, ambient life on/off, room time. All local animation: nothing is sent to an agent.
-- **Camera.** Drag orbits all the way round the vertical axis (the wall between you and the room fades out), ⟲ / ⟳ and the arrow keys rotate, wheel / pinch zooms, "איפוס מצלמה" returns home.
+- **Camera.** The room is a painted picture with 3D people on it: the zoom buttons (or `+` / `-`) zoom the picture, "איפוס מצלמה" (or `0`) returns home. There is one view only; the old rotating 3D office was removed.
 
 ```bash
 # PR opened → the bell rings (pr can be a number or the PR URL)
@@ -65,7 +65,7 @@ Key design decisions:
 - **Strict where it matters, tolerant where it doesn't.** `review`, `pr.merged` and `deploy` are validated (`400` with details); the original kinds are never rejected, so existing agents keep working. Retries of the same review replace it.
 - **Everything derived from reported events.** Alerts, the 7-day graph and the reliability score (success 60 / stability 25 / code quality 15) are computed from what agents already send; thresholds live in one place in `insights.js`.
 - **Private by default.** Live data needs a password login (signed HttpOnly cookie, login rate-limited per IP). The public `/showcase` route renders demo mode only and never calls the private API.
-- **No build, no assets.** All 3D geometry is generated in code with vendored Three.js; static furniture is merged per material, pixel ratio and shadows drop automatically on slow phones, and the render loop pauses in background tabs. `prefers-reduced-motion` is respected.
+- **Light by design.** The page paints the room picture first (preloaded, webfont non-blocking) and only then loads the 3D people (`stage3d.min.js`, ~150 KB compressed, tree-shaken three.js; model 0.27 MB, meshopt). The pixel ratio is capped at 1.5 and drops further by itself when frames run long, a calm room (everybody seated) draws at ~30 fps, nothing is drawn in a hidden tab or when the room is scrolled off screen, and name pills move with `translate` only. Without WebGL (or after a lost GL context) the agents show as round emblem avatars at their desks (`.cv-dot`), walking the same paths. `prefers-reduced-motion` is respected.
 
 ### Design (Apple-style redesign)
 
@@ -103,13 +103,13 @@ Ready-made hooks are in [`integrations/`](integrations/) (a shell hook, a Node r
         style="width:100%;aspect-ratio:16/9;border:0;border-radius:20px"></iframe>
 ```
 
-Options: `bg=transparent` or `bg=light`, `loop=12` (camera loop in seconds). The route sends `frame-ancestors *`, so any site can embed it.
+Options: `bg=transparent` or `bg=light`. The route sends `frame-ancestors *`, so any site can embed it.
 
 ## Tech stack
 
 - **Cloudflare Workers** (free tier): static assets + a Worker + one SQLite-backed **Durable Object**
-- **JavaScript** (ES modules), no framework and no build step
-- **Three.js r170** (vendored) for the isometric 3D scene; SVG/canvas emblems
+- **JavaScript** (ES modules), no framework. The one build step is `npm run build` (esbuild, devDependency): it bundles `src3d/stage3d.js` + the vendored Three.js r170 (`src3d/`, not served) into `stage3d.min.js`; run it after editing `src3d/` or `concept-calib.js` (a test fails on a stale bundle). `room-core.js` is the room's clock and time of day; `concept.js` draws the room.
+- **Three.js r170** (vendored in `src3d/`) for the 3D people; SVG emblems
 - **WebSocket** realtime with polling fallback
 - **node:test** unit tests (no dependencies)
 - UI in Hebrew (RTL)
@@ -168,7 +168,7 @@ Run `npm test`. The board tests exercise the Worker auth boundary plus the Durab
 
 ## Concept view (Apple v2)
 
-The default scene is the approved Apple concept room (`assets/office-room-day.jpg` / `office-room-night.jpg`, the concept picture with its people removed) at the concept frame's exact layout: floating frosted top bar, left tool column, bottom dock, and the task board / review / chat panel open on the right (560 px). The people are real rigged 3D characters (`stage3d.js`, three.js) on a transparent canvas laid exactly over the picture: the camera is the picture's own camera, fitted from the painted desks' vanishing points (`concept-calib.js`), so a person standing on the painted floor has the right size and perspective, and invisible depth-only desk boxes let the painted desks hide legs. They have skeletal animation (idle, walk, sit down, stand up, sit and talk; typing is two-bone IK to the keyboard), each agent has their own skin, hair and clothes colours (from the roster), pyjamas and sleeping at night. Name pills, status dots, speech bubbles and the bell come from the agents of the current mode (`roster.json` `agents` in demo, the live roster after login, at most 6, one desk each, `concept.js`). Movement is planned on the painted floor, then played as skeletal motion at the matching spot. The cube button in the tool column switches to the live three.js room (`?view=3d` also works). **Character asset:** `assets/models/agent.glb` is the Quaternius *Universal Animation Library* mannequin and a subset of its clips (CC0 1.0, see `assets/models/LICENSE-quaternius-cc0.txt`), trimmed to 0.6 MB; the glTF loader files in `vendor/` are from three.js r170 (MIT).
+The default scene is the approved Apple concept room (`assets/office-room-day.jpg` / `office-room-night.jpg`, the concept picture with its people removed) at the concept frame's exact layout: floating frosted top bar, left tool column, bottom dock, and the task board / review / chat panel open on the right (560 px). The people are real rigged 3D characters (`src3d/stage3d.js`, three.js, built into `stage3d.min.js`) on a transparent canvas laid exactly over the picture: the camera is the picture's own camera, fitted from the painted desks' vanishing points (`concept-calib.js`), so a person standing on the painted floor has the right size and perspective, and invisible depth-only desk boxes let the painted desks hide legs. They have skeletal animation (idle, walk, sit down, stand up, sit and talk; typing is two-bone IK to the keyboard), each agent has their own skin, hair and clothes colours (from the roster), pyjamas and sleeping at night. Name pills, status dots, speech bubbles and the bell come from the agents of the current mode (`roster.json` `agents` in demo, the live roster after login, at most 6, one desk each, `concept.js`). Movement is planned on the painted floor, then played as skeletal motion at the matching spot. The cube button in the tool column switches to the live three.js room (`?view=3d` also works). **Character asset:** `assets/models/agent.glb` is the Quaternius *Universal Animation Library* mannequin and a subset of its clips (CC0 1.0, see `assets/models/LICENSE-quaternius-cc0.txt`), trimmed to 0.6 MB; the glTF loader files in `vendor/` are from three.js r170 (MIT).
 
 ### Instant wake for Instinct
 
