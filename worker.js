@@ -1,6 +1,7 @@
 // worker.js — Agent Office backend: static assets + realtime event ingestion + Ori's login.
 // Routes:
 //   POST /api/ingest                 agent report (Bearer per-agent token, or legacy X-Ingest-Token)
+//   POST /mcp                        MCP server (Streamable HTTP JSON-RPC): initialize/tools for the token's agent
 //   POST /api/agents/:id/heartbeat   full snapshot from one agent (Bearer token of that agent)
 //   POST /api/login  {password}      -> sets the long-lived signed session cookie
 //   POST /api/logout                 -> clears it
@@ -35,6 +36,7 @@ import { parseBoardTask, parseTicket, BOARD_AGENTS } from './server/board.js';
 import { parseAuditKind, auditKind } from './audit-state.js';
 import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
+import { handleMcp } from './server/mcp.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -130,6 +132,18 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+
+    /* ---- MCP (Model Context Protocol): same per-agent Bearer auth as /api/ingest, tools act as the token's agent ---- */
+    if (path === '/mcp') {
+      if (request.method !== 'POST') return json({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'POST a JSON-RPC request; SSE streams are not supported' } }, 405);
+      const who = await resolveWriter(request, env);
+      if (!who.ok || !who.agent) return json({ ok: false, error: 'per-agent token required' }, 401);
+      let payload;
+      try { payload = await readJson(request); } catch { return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }, 400); }
+      const out = await handleMcp(hub(env), who.agent, payload);
+      if (out === null) return new Response(null, { status: 202 });
+      return json(out);
+    }
 
     /* ---- agent self-registration (public; the invite secret travels in the URL fragment and POST bodies only) ---- */
     const joinPage = /^\/join\/([a-f0-9]{16})$/.exec(path);
