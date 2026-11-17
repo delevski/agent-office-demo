@@ -3,9 +3,14 @@
 //                reviews (code reviews, newest last)  ·  changes (merged PRs, deploys, closed tasks)
 //                audit:<day> (the "בקרה" log: PR lifecycle, agent messages, board tasks; one key per day, 30 days)
 //                ticketrate:<agent> (agent-to-agent ticket rate limit)
-//                fail:<ip> (login throttle)
+//                fail:<ip> (login throttle)  ·  regfail:<ip> (register throttle)
+//                invite:<id> (owner-created one-time registration invites; secret stored as SHA-256)
+//                dyn:<agentId> (self-registered agents)  ·  tok:<sha256> (registered agent token -> agent)
 import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent, newlyDone, dayOf } from './agents.js';
 import { changesForDay, buildSummary, overnightSince, dayBounds } from '../insights.js';
+import { randHex, sha256hex, normalizeAgentId, validAgentId, inviteState, inviteView, dynView,
+  INVITE_TTL_DEFAULT, INVITE_TTL_MAX, INVITE_TTL_MIN, MAX_PENDING_INVITES, MAX_DYNAMIC_AGENTS,
+  REGISTER_WINDOW_MS, REGISTER_IP_MAX, TOKEN_PREFIX, TOKEN_LEN, INVITE_ID_LEN, INVITE_SECRET_LEN } from './registration.js';
 
 import { boardView, boardReport, BOARD_LIMIT, TICKET_PER_HOUR, TICKET_OPEN_MAX, TICKET_DEPTH_MAX, TERMINAL } from './board.js';
 import { auditFromReport, auditFromTask, buildAudit, mergeDay, AUDIT_DAYS } from '../audit-state.js';
@@ -45,6 +50,12 @@ export class EventHub {
       this.agents = new Map();
       const rows = await this.state.storage.list({ prefix: 'agent:' });
       for (const [k, v] of rows) this.agents.set(k.slice(6), v);
+      this.invites = new Map();
+      const invRows = await this.state.storage.list({ prefix: 'invite:' });
+      for (const [k, v] of invRows) this.invites.set(k.slice(7), v);
+      this.dyn = new Map();
+      const dynRows = await this.state.storage.list({ prefix: 'dyn:' });
+      for (const [k, v] of dynRows) this.dyn.set(k.slice(4), v);
     });
   }
 
@@ -415,6 +426,119 @@ export class EventHub {
       const key = 'fail:' + url.searchParams.get('ip');
       const f = await this.state.storage.get(key);
       const next = f && now - f.t < LOGIN_WINDOW_MS ? { n: f.n + 1, t: f.t } : { n: 1, t: now };
+      await this.state.storage.put(key, next);
+      return json({ n: next.n });
+    }
+
+    /* ---- agent self-registration: owner invites -> one dynamic token per agent ---- */
+    // Owner creates an invite. The plaintext secret is returned once, to the owner only, and lives
+    // in the link's URL fragment (#...), so it never reaches a server, log or referrer header.
+    if (url.pathname === '/invites/create' && request.method === 'POST') {
+      const body = await request.json();
+      const agent = normalizeAgentId(body.agent || body.name);
+      const taken = [...this.dyn.keys(), ...[].concat(body.taken || [])]; // the Worker passes the env-token ids
+      if (!validAgentId(agent, taken)) return json({ ok: false, error: 'invalid or taken agent id' }, 400);
+      const name = String(body.name || agent).trim().slice(0, 40) || agent;
+      const pending = [...this.invites.values()].filter(i => inviteState(i, now) === 'pending');
+      if (pending.length >= MAX_PENDING_INVITES) return json({ ok: false, error: 'too many pending invites' }, 429);
+      if (this.dyn.size >= MAX_DYNAMIC_AGENTS) return json({ ok: false, error: 'registered agent limit reached' }, 429);
+      const ttl = Math.min(Math.max(Number(body.ttlMs) || INVITE_TTL_DEFAULT, INVITE_TTL_MIN), INVITE_TTL_MAX);
+      const id = randHex(INVITE_ID_LEN / 2), secret = randHex(INVITE_SECRET_LEN / 2);
+      const inv = { id, hash: await sha256hex(secret), agent, name, board: !!body.board, created: now, expires: now + ttl, used: false, revoked: false, fails: 0 };
+      this.invites.set(id, inv);
+      await this.state.storage.put('invite:' + id, inv);
+      return json({ ok: true, secret, invite: inviteView(inv, now) });
+    }
+    if (url.pathname === '/invites/list') {
+      const invites = [...this.invites.values()].map(i => inviteView(i, now)).sort((a, b) => b.created - a.created).slice(0, 50);
+      return json({ invites, agents: [...this.dyn.values()].map(dynView), now });
+    }
+    if (url.pathname === '/invites/revoke' && request.method === 'POST') {
+      const body = await request.json();
+      const inv = this.invites.get(String(body.id || ''));
+      if (!inv) return json({ ok: false, error: 'not found' }, 404);
+      if (inviteState(inv, now) !== 'pending') return json({ ok: false, error: 'only a pending invite can be revoked' }, 409);
+      inv.revoked = true;
+      await this.state.storage.put('invite:' + inv.id, inv);
+      return json({ ok: true, invite: inviteView(inv, now) });
+    }
+    // Public invite state, keyed by the unguessable id alone: enough for the join page to render,
+    // never enough to register (that needs the fragment secret).
+    if (url.pathname === '/invite/status') {
+      const id = url.searchParams.get('id') || '';
+      const inv = this.invites.get(id);
+      if (!inv) return json({ ok: false, error: 'not found' }, 404);
+      const state = inviteState(inv, now);
+      return json({ ok: true, state, agent: inv.agent, name: inv.name, board: !!inv.board, expires: inv.expires,
+        connected: state === 'registered' && this.agents.has(inv.agent) });
+    }
+    if (url.pathname === '/register' && request.method === 'POST') {
+      const body = await request.json();
+      // One invite -> one registration, even under concurrent requests.
+      return this.state.blockConcurrencyWhile(async () => {
+      const id = String(body.id || ''), secret = String(body.secret || '');
+      const inv = this.invites.get(id);
+      const bad = async status => {
+        if (inv) { inv.fails = (inv.fails || 0) + 1; await this.state.storage.put('invite:' + inv.id, inv); }
+        return json({ ok: false, error: 'invalid invite' }, status);
+      };
+      if (!inv) return json({ ok: false, error: 'invalid invite' }, 403);
+      if (!new RegExp(`^[a-f0-9]{${INVITE_SECRET_LEN}}$`).test(secret)) return bad(403);
+      if (await sha256hex(secret) !== inv.hash) return bad(403);
+      const state = inviteState(inv, now);
+      if (state === 'registered') return json({ ok: false, error: 'invite already used; the token was shown once at registration - ask the owner for a new invite' }, 409);
+      if (state !== 'pending') return json({ ok: false, error: 'invite ' + state }, 410);
+      const agent = inv.agent;
+      if (this.dyn.has(agent)) return json({ ok: false, error: 'agent id already registered' }, 409);
+      const token = TOKEN_PREFIX + randHex(TOKEN_LEN / 2);
+      const dyn = { id: agent, name: inv.name, board: !!inv.board, created: now, disabled: false };
+      inv.used = true; inv.registered = now;
+      this.invites.set(inv.id, inv);
+      this.dyn.set(agent, dyn);
+      await this.state.storage.put({
+        ['invite:' + inv.id]: inv,
+        ['dyn:' + agent]: dyn,
+        ['tok:' + await sha256hex(token)]: { agent, created: now },
+      });
+      // First presence: the agent appears in the office immediately, with an honest feed line.
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify({ agent, kind: 'status', status: 'idle', name: '', value: '', note: 'נרשם למשרד דרך הזמנה' }) }));
+      return json({ ok: true, agent, name: dyn.name, board: dyn.board, token });
+      });
+    }
+    // The Worker resolves an unmatched bearer token: header in, agent id out. Never logged.
+    if (url.pathname === '/agent/resolve') {
+      const tok = request.headers.get('X-Agent-Token') || '';
+      if (!tok) return json({ ok: false }, 401);
+      const rec = await this.state.storage.get('tok:' + await sha256hex(tok));
+      const dyn = rec && this.dyn.get(rec.agent);
+      if (!rec || !dyn) return json({ ok: false }, 401);
+      if (dyn.disabled) return json({ ok: false, error: 'disabled' }, 403);
+      return json({ ok: true, agent: rec.agent });
+    }
+    if (url.pathname === '/agents/dynamic') {
+      return json({ agents: [...this.dyn.values()].map(dynView) });
+    }
+    // Owner disables a registered agent: its tokens stop working immediately.
+    if (url.pathname === '/agents/revoke' && request.method === 'POST') {
+      const body = await request.json();
+      const id = normalizeAgentId(body.id);
+      const dyn = this.dyn.get(id);
+      if (!dyn) return json({ ok: false, error: 'not a registered agent' }, 404);
+      dyn.disabled = true;
+      await this.state.storage.put('dyn:' + id, dyn);
+      for (const [k, v] of await this.state.storage.list({ prefix: 'tok:' }))
+        if (v.agent === id) await this.state.storage.delete(k);
+      return json({ ok: true, agent: dynView(dyn) });
+    }
+    // Register throttle, same shape as the login guard.
+    if (url.pathname === '/register-guard') {
+      const f = await this.state.storage.get('regfail:' + url.searchParams.get('ip'));
+      return json({ blocked: !!f && now - f.t < REGISTER_WINDOW_MS && f.n >= REGISTER_IP_MAX });
+    }
+    if (url.pathname === '/register-attempt' && request.method === 'POST') {
+      const key = 'regfail:' + url.searchParams.get('ip');
+      const f = await this.state.storage.get(key);
+      const next = f && now - f.t < REGISTER_WINDOW_MS ? { n: f.n + 1, t: f.t } : { n: 1, t: now };
       await this.state.storage.put(key, next);
       return json({ n: next.n });
     }

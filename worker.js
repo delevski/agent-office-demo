@@ -31,7 +31,7 @@ import {
 } from './server/auth.js';
 
 export { EventHub } from './server/hub.js';
-import { parseBoardTask, parseTicket } from './server/board.js';
+import { parseBoardTask, parseTicket, BOARD_AGENTS } from './server/board.js';
 import { parseAuditKind, auditKind } from './audit-state.js';
 import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
@@ -58,6 +58,32 @@ function hub(env) {
   return env.HUB.get(env.HUB.idFromName('global'));
 }
 
+/** Env tokens (AGENT_TOKEN_<ID>) first; an unmatched bearer may be a registered agent's dynamic token. */
+async function resolveWriter(request, env) {
+  const w = writerFor(request, env);
+  if (w.ok) return w;
+  const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get('Authorization') || '')?.[1]?.trim();
+  if (!bearer) return w;
+  try {
+    const res = await hub(env).fetch('https://hub/agent/resolve', { headers: { 'X-Agent-Token': bearer } });
+    if (!res.ok) return { ok: false };
+    const d = await res.json();
+    return d.ok && d.agent ? { ok: true, agent: d.agent } : { ok: false };
+  } catch { return { ok: false }; }
+}
+
+/** Env-token agents plus self-registered ones: who exists (known) and who may receive board tasks (board). */
+async function agentLists(env) {
+  let dyn = [];
+  try { dyn = (await (await hub(env).fetch('https://hub/agents/dynamic')).json()).agents || []; } catch { /* hub cold start: env agents still work */ }
+  const active = dyn.filter(d => !d.disabled);
+  return {
+    known: [...tokenAgents(env), ...active.map(d => d.id)],
+    board: [...BOARD_AGENTS, ...active.filter(d => d.board).map(d => d.id)],
+    registered: dyn,
+  };
+}
+
 async function readJson(request) {
   const text = await request.text();
   if (text.length > 32_000) throw new Error('too large');
@@ -65,7 +91,7 @@ async function readJson(request) {
 }
 
 async function ingest(request, env, forcedAgent = null) {
-  const who = writerFor(request, env);
+  const who = await resolveWriter(request, env);
   if (!who.ok) return json({ ok: false, error: 'unauthorized' }, 401);
   let body;
   try { body = await readJson(request); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
@@ -105,6 +131,98 @@ export default {
     const path = url.pathname;
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
+    /* ---- agent self-registration (public; the invite secret travels in the URL fragment and POST bodies only) ---- */
+    const joinPage = /^\/join\/([a-f0-9]{16})$/.exec(path);
+    if (joinPage && request.method === 'GET') {
+      // Fetch the pretty URL ('/join'): requesting '/join.html' makes the Assets
+      // binding answer with a 308 to '/join', which would drop the <id> path segment.
+      const res = await env.ASSETS.fetch(new Request(new URL('/join', url), request));
+      if (res.status >= 300 && res.status < 400) return new Response('join page asset missing', { status: 500 });
+      const headers = new Headers(res.headers);
+      headers.set('Cache-Control', 'no-store');
+      headers.set('Referrer-Policy', 'no-referrer');
+      return new Response(res.body, { status: res.status, headers });
+    }
+    const inviteApi = /^\/api\/invite\/([a-f0-9]{16})(\/status)?$/.exec(path);
+    if (inviteApi && request.method === 'GET') {
+      const st = await (await hub(env).fetch('https://hub/invite/status?id=' + inviteApi[1])).json();
+      if (!st.ok) return json({ ok: false, error: st.error || 'not found' }, 404);
+      if (inviteApi[2]) return json({ ok: true, state: st.state, agent: st.agent, name: st.name, board: st.board, connected: st.connected, expires: st.expires });
+      // Agent-readable manifest: everything needed to self-register without parsing HTML. No secrets here.
+      const origin = url.origin;
+      return json({
+        ok: true, state: st.state, agent: { id: st.agent, name: st.name, board: st.board }, expires_at: new Date(st.expires).toISOString(),
+        ...(st.state === 'pending' ? {
+          steps: [
+            { do: `POST ${origin}/api/register`, body: { id: inviteApi[1], secret: '<the part after # in your invite link>' }, returns: 'your dedicated token, shown once - store it in your environment as OFFICE_TOKEN' },
+            { do: `POST ${origin}/api/ingest`, headers: { Authorization: 'Bearer $OFFICE_TOKEN', 'Content-Type': 'application/json' }, body: { kind: 'status', status: 'idle', note: 'connected' }, then: 'report task.start / task.done / config / usage the same way, as agent ' + st.agent },
+            ...(st.board ? [{ do: `GET ${origin}/api/inbox`, headers: { Authorization: 'Bearer $OFFICE_TOKEN' }, every: '5 minutes', then: 'POST /api/inbox/<task-id>/claim {}, keep the claimToken, report task.start/progress/done to /api/ingest with it' }] : []),
+          ],
+          instructions_he: 'שולחים POST אחד ל-/api/register עם המזהה והסוד שבקישור, שומרים את הטוקן שחוזר (מוצג פעם אחת בלבד), ומדווחים ל-/api/ingest עם Authorization: Bearer.',
+        } : {}),
+      });
+    }
+    if (path === '/api/register' && request.method === 'POST') {
+      const ip = request.headers.get('CF-Connecting-IP') || 'local';
+      const guard = await (await hub(env).fetch('https://hub/register-guard?ip=' + encodeURIComponent(ip))).json();
+      if (guard.blocked) return json({ ok: false, error: 'too many attempts' }, 429);
+      await hub(env).fetch('https://hub/register-attempt?ip=' + encodeURIComponent(ip), { method: 'POST' });
+      let body;
+      try { body = await readJson(request); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
+      const res = await hub(env).fetch('https://hub/register', { method: 'POST', body: JSON.stringify({ id: String(body.id || ''), secret: String(body.secret || '') }) });
+      const d = await res.json();
+      if (!res.ok || !d.ok) return json({ ok: false, error: d.error || 'registration failed' }, res.status);
+      return json({
+        ok: true, agent: d.agent, name: d.name, board: d.board, token: d.token,
+        endpoints: {
+          ingest: url.origin + '/api/ingest',
+          heartbeat: url.origin + '/api/agents/' + d.agent + '/heartbeat',
+          ...(d.board ? { inbox: url.origin + '/api/inbox' } : {}),
+        },
+        note_he: 'שמור את הטוקן עכשיו - הוא מוצג פעם אחת ולא ניתן לשחזור.',
+      });
+    }
+
+    /* ---- owner: invite management (session + same-origin, like every owner write) ---- */
+    if (path === '/api/invites' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      let body;
+      try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
+      const ttlHours = Number(body.ttlHours);
+      const res = await hub(env).fetch('https://hub/invites/create', { method: 'POST', body: JSON.stringify({
+        agent: body.agent, name: body.name, board: body.board !== false, taken: tokenAgents(env),
+        ttlMs: Number.isFinite(ttlHours) ? ttlHours * 3600_000 : undefined,
+      }) });
+      const d = await res.json();
+      if (!res.ok || !d.ok) return privateJson({ ok: false, error: d.error || 'failed' }, res.status);
+      return privateJson({ ok: true, invite: d.invite, url: `${url.origin}/join/${d.invite.id}#${d.secret}` });
+    }
+    if (path === '/api/invites' && request.method === 'GET') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const res = await hub(env).fetch('https://hub/invites/list');
+      return privateJson(await res.json(), res.status);
+    }
+    if (path === '/api/invites/revoke' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      let body;
+      try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
+      const res = await hub(env).fetch('https://hub/invites/revoke', { method: 'POST', body: JSON.stringify({ id: String(body.id || '') }) });
+      return privateJson(await res.json(), res.status);
+    }
+    if (path === '/api/agents/revoke' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      let body;
+      try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
+      const res = await hub(env).fetch('https://hub/agents/revoke', { method: 'POST', body: JSON.stringify({ id: String(body.id || '') }) });
+      return privateJson(await res.json(), res.status);
+    }
+
     /* ---- writes from agents ---- */
     if (path === '/api/ingest' && request.method === 'POST') return ingest(request, env);
     const hb = /^\/api\/agents\/([^/]+)\/heartbeat$/.exec(path);
@@ -136,9 +254,9 @@ export default {
 
     /* ---- morning summary: Ori, or any agent / cron holding a write token (to post it somewhere) ---- */
     if (path === '/api/summary' && request.method === 'GET') {
-      if (!(await isLoggedIn(request, env)) && !writerFor(request, env).ok) return privateJson({ ok: false, error: 'login or agent token required' }, 401);
+      if (!(await isLoggedIn(request, env)) && !(await resolveWriter(request, env)).ok) return privateJson({ ok: false, error: 'login or agent token required' }, 401);
       const qs = new URLSearchParams(url.search);
-      qs.set('known', tokenAgents(env).join(','));
+      qs.set('known', (await agentLists(env)).known.join(','));
       const res = await hub(env).fetch('https://hub/summary?' + qs.toString());
       return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/json', 'Cache-Control': 'no-store' } });
     }
@@ -167,7 +285,7 @@ export default {
         return serveFile(env, id);
       }
       // agents: GET only, with their own token, and only files attached to a task assigned to them (Instinct's relay token: any)
-      const who = writerFor(request, env);
+      const who = await resolveWriter(request, env);
       if (request.method !== 'GET' || !who.ok || !who.agent) return privateJson({ ok: false, error: 'login or per-agent token required' }, 401);
       const st = await (await hub(env).fetch('https://hub/board/file?id=' + id + '&agent=' + (who.agent === 'instinct' ? '' : encodeURIComponent(who.agent)))).json();
       if (!st.allowed) return privateJson({ ok: false, error: 'not found' }, 404);
@@ -181,7 +299,8 @@ export default {
       if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
       let body;
       try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
-      const parsed = parseBoardTask(body, tokenAgents(env));
+      const lists = await agentLists(env);
+      const parsed = parseBoardTask(body, lists.known, lists.board);
       if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid task', details: parsed.errors }, 400);
       const att = await resolveAttachments(env, parsed.attachments, url.origin);
       if (!att.ok) return privateJson({ ok: false, error: 'invalid task', details: [att.error] }, att.error === 'uploads not configured' ? 501 : 400);
@@ -226,7 +345,7 @@ export default {
     }
     const inbox = /^\/api\/inbox(?:\/(board-[a-zA-Z0-9-]+)\/(claim|delivery))?$/.exec(path);
     if (inbox) {
-      const who = writerFor(request, env);
+      const who = await resolveWriter(request, env);
       if (!who.ok || !who.agent) return privateJson({ ok: false, error: 'per-agent token required' }, 401);
       if (request.method === 'GET' && !inbox[1]) {
         const relay = url.searchParams.get('relay') === '1';
@@ -244,7 +363,8 @@ export default {
       if (request.method === 'POST' && !inbox[1]) { // agent-to-agent ticket
         let body;
         try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
-        const t = parseTicket(body, who.agent, tokenAgents(env));
+        const lists = await agentLists(env);
+        const t = parseTicket(body, who.agent, lists.known, lists.board);
         if (t.errors.length) return privateJson({ ok: false, error: 'invalid ticket', details: t.errors }, 400);
         const res = await hub(env).fetch('https://hub/board/ticket', { method: 'POST', body: JSON.stringify(t) });
         const out = await res.json();
@@ -267,8 +387,17 @@ export default {
 
       if (path === '/api/agents' || /^\/api\/agents\/[^/]+$/.test(path)) {
         const one = path === '/api/agents' ? '' : agentId(decodeURIComponent(path.split('/')[3]));
-        const known = encodeURIComponent(tokenAgents(env).join(','));
+        const lists = await agentLists(env);
+        const known = encodeURIComponent(lists.known.join(','));
         const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
+        if (!one) { // attach the self-registered roster so the UI can offer invites, assignment and revoke
+          const d = await res.json();
+          d.registered = lists.registered;
+          // A disabled registered agent keeps no seat, no roster entry and no place in the counters.
+          const disabled = new Set(lists.registered.filter(r => r.disabled).map(r => r.id));
+          if (disabled.size && Array.isArray(d.agents)) d.agents = d.agents.filter(a => !disabled.has(agentId(a.id || a.agent || '')));
+          return new Response(JSON.stringify(d), { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+        }
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
       if (path === '/api/reviews' || path === '/api/audit' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {

@@ -1,0 +1,37 @@
+/* invite.css — owner-only "הזמנת סוכן" panel, lazy-loaded with invite-view.js (scoped to #invite-ov). */
+#invite-ov .iv-form { display: grid; gap: 10px; margin-bottom: 14px; }
+#invite-ov .iv-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+#invite-ov .grow { flex: 1; min-width: 140px; }
+#invite-ov label { display: grid; gap: 4px; font-size: .85rem; font-weight: 700; }
+#invite-ov input[type="text"], #invite-ov select {
+  font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line, #e3ddd2);
+  background: var(--card, #fff); color: inherit; min-width: 0;
+}
+#invite-ov input[type="text"]:focus, #invite-ov select:focus { outline: 2px solid #4dc9f7; outline-offset: 1px; }
+#invite-ov .iv-check { display: flex; flex-direction: row; align-items: center; gap: 8px; padding-bottom: 8px; cursor: pointer; }
+#invite-ov .iv-check input { width: 18px; height: 18px; accent-color: #4dc9f7; }
+#invite-ov .iv-err { color: #c0392b; font-size: .85rem; min-height: 1.2em; }
+#invite-ov .modal-actions { display: flex; justify-content: flex-start; }
+#invite-ov .iv-created { border: 1px solid #b7e3c8; background: #f0faf3; border-radius: 12px; padding: 12px; margin-bottom: 14px; display: grid; gap: 8px; }
+#invite-ov .iv-created.hidden { display: none; }
+#invite-ov .iv-created-title { font-weight: 800; }
+#invite-ov .iv-linkbox { display: flex; gap: 8px; align-items: center; }
+#invite-ov .iv-linkbox code {
+  flex: 1; overflow-wrap: anywhere; font-size: .8rem; background: #fff; border: 1px dashed #b7e3c8;
+  border-radius: 8px; padding: 8px; direction: ltr; text-align: left; user-select: all;
+}
+#invite-ov .iv-h { margin: 14px 0 6px; font-size: .9rem; }
+#invite-ov .iv-list { display: grid; gap: 6px; }
+#invite-ov .iv-item {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--line, #ece6da); border-radius: 10px; padding: 8px 10px; font-size: .85rem;
+}
+#invite-ov .iv-item .grow { flex: 1; min-width: 160px; }
+#invite-ov .iv-item .muted { font-size: .78rem; }
+#invite-ov .iv-state { font-size: .75rem; font-weight: 800; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+#invite-ov .st-pending { background: #fff4d6; color: #8a6d1a; }
+#invite-ov .st-ok { background: #e3f6e9; color: #1e7a3c; }
+#invite-ov .st-dead { background: #f3f0ea; color: #8d8677; }
+#invite-ov .iv-empty { color: #8d8677; padding: 14px 4px; font-size: .9rem; }
+#invite-ov .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.iv-danger { background: #b03a2e !important; color: #fff !important; border-color: #b03a2e !important; }

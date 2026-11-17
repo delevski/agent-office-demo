@@ -1,0 +1,65 @@
+/* join.css — the public agent self-registration page (/join/<id>#...). Standalone, Hebrew RTL. */
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: Heebo, system-ui, sans-serif; background: #f5f2ec; color: #2b2620;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.wrap { width: min(720px, 100% - 24px); margin: 0 auto; padding: 28px 0 20px; flex: 1; display: flex; flex-direction: column; }
+.head { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
+.head .mark { font-size: 2rem; }
+.head h1 { font-size: 1.35rem; margin: 0; }
+.head p { margin: 2px 0 0; font-size: .85rem; }
+.muted { color: #8d8677; }
+.card {
+  background: #fff; border: 1px solid #ece6da; border-radius: 18px; padding: 22px;
+  box-shadow: 0 10px 30px rgba(60, 50, 30, .06); flex: 1;
+}
+.loading { text-align: center; color: #8d8677; padding: 40px 0; }
+.invite-for h2 { margin: 10px 0 4px; font-size: 1.25rem; }
+.pill {
+  display: inline-block; background: #fff4d6; color: #8a6d1a; font-weight: 800; font-size: .78rem;
+  border-radius: 999px; padding: 3px 12px;
+}
+.warn { background: #fff4d6; border: 1px solid #ecd27a; border-radius: 12px; padding: 10px 14px; margin: 14px 0; font-size: .9rem; }
+.steps { margin: 18px 0; padding-inline-start: 22px; display: grid; gap: 16px; }
+.steps li { line-height: 1.5; }
+.steps b { display: inline; }
+.code {
+  position: relative; margin-top: 8px; background: #26221c; color: #f5efe4; border-radius: 12px;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+.code pre { margin: 0; padding: 12px; overflow-x: auto; font-size: .8rem; line-height: 1.5; flex: 1; min-width: 0; direction: ltr; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.code.token pre { color: #9ff0b3; font-weight: 700; user-select: all; }
+.copy {
+  margin: 8px; flex: none; font: inherit; font-size: .75rem; font-weight: 700; cursor: pointer;
+  background: #3d372e; color: #f5efe4; border: 1px solid #57503f; border-radius: 8px; padding: 5px 10px;
+}
+.copy:hover { background: #4a443a; }
+.row { display: flex; gap: 12px; align-items: center; margin: 16px 0 4px; flex-wrap: wrap; }
+.primary {
+  font: inherit; font-weight: 800; cursor: pointer; border: 0; border-radius: 12px; padding: 10px 22px;
+  background: linear-gradient(135deg, #4dc9f7, #2fa4dd); color: #fff; box-shadow: 0 4px 14px rgba(77, 201, 247, .35);
+}
+.primary:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+.more { margin-top: 14px; border-top: 1px dashed #ece6da; padding-top: 12px; }
+.more summary { cursor: pointer; font-weight: 700; color: #6d6656; font-size: .9rem; }
+.more p { font-size: .88rem; }
+.more code { background: #f3efe7; border-radius: 6px; padding: 1px 6px; font-size: .8rem; }
+.wait { display: flex; align-items: center; gap: 8px; margin-top: 18px; color: #8a6d1a; font-size: .88rem; }
+.wait .dot { width: 9px; height: 9px; border-radius: 50%; background: #e8b93c; animation: blink 1.4s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.state { text-align: center; padding: 26px 10px; display: grid; gap: 8px; justify-items: center; }
+.state .big { font-size: 2.6rem; }
+.state h2 { margin: 0; }
+.state p { margin: 0; max-width: 46ch; }
+.state.ok h2 { color: #1e7a3c; }
+.state.bad h2 { color: #b03a2e; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.foot { text-align: center; font-size: .78rem; padding: 14px 0 4px; }
+/* Long unbreakable LTR code lines must scroll inside their box, never stretch the page.
+   Grid/flex items default to min-width:auto and expand ancestors to content width on narrow screens. */
+.card, .steps li, .more, .code, .state { min-width: 0; }
+@media (max-width: 560px) {
+  .card { padding: 16px; }
+  .code pre { font-size: .72rem; }
+}

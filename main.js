@@ -32,6 +32,7 @@ const FALLBACK_ROSTER = { agents: [
 
 let AGENTS = [];          // demo characters (roster.json "agents")
 let LIVE = [];            // real agents (roster.json "live" + anyone who reports)
+let registeredAgents = []; // self-registered agents (from /api/agents .registered), for assignment + invites
 const liveState = new Map(); // agent id -> server view (GET /api/agents)
 const auth = { loggedIn: false, configured: false };
 function roster() { return mode === 'live' ? LIVE : AGENTS; }
@@ -80,7 +81,7 @@ async function loadRoster() {
 /* ---------------- concept view: the approved room picture + live pills, bubbles and the right-hand panel ---------------- */
 let cv = null, chatLog = [];
 const isDesktop = () => matchMedia('(min-width:901px)').matches;
-function castNow() { return mode === 'live' ? LIVE : AGENTS; }
+function castNow() { return mode === 'live' ? LIVE.filter(a => !registeredAgents.some(r => r.id === a.id && r.disabled)) : AGENTS; } // a disabled registered agent keeps its history but leaves the room, the roster and the counters
 let cvMode = '';
 function demoChatSeed() {
   return [['gemino', 'נתוני ShortiGo מוכנים, העליתי את הדוח לתיקייה המשותפת'], ['hermessi', 'מעולה, מתחיל לארוז את ה-release'], ['deepsi', 'סיכום המתחרים עודכן, יש שני דברים לשים לב אליהם']]
@@ -91,6 +92,15 @@ function syncCast() {
   if (cvMode !== mode) { if (cvMode) chatLog = mode === 'demo' ? demoChatSeed() : []; cvMode = mode; } // live mode never shows the demo conversation
   { const card = document.querySelector('.scene-card'); const n = parseFloat(card && card.style.getPropertyValue('--night')); if (!Number.isNaN(n)) cv.setNight(n); }
   cv.setCast(castNow());
+  { // the room seats 6: point at the full roster when more agents are connected
+    const extra = mode === 'live' ? Math.max(0, castNow().length - 6) : 0;
+    const ov = $('#cv-overflow');
+    if (ov) {
+      if (!ov.dataset.wired) { ov.dataset.wired = '1'; ov.addEventListener('click', () => switchView('view-agents')); }
+      ov.classList.toggle('hidden', !extra);
+      if (extra) ov.textContent = `עוד ${extra} · לכל הסוכנים`;
+    }
+  }
   if (acId && !castNow().some(x => x.id === acId)) closeAgentCard(); // the mode changed: that person is not in this room
   castNow().forEach(a => cv.setStatus(a.id, mode === 'live' ? sceneStatus(liveState.get(a.id)) : (agentStats.get(a.id)?.state === 'idle' ? 'idle' : 'working')));
   renderCPanel();
@@ -600,6 +610,7 @@ async function loadAgents() {
   try {
     const d = await apiGet('./api/agents');
     if (!d) return;
+    registeredAgents = Array.isArray(d.registered) ? d.registered : [];
     (d.agents || []).forEach(v => onAgentUpdate(v, { quiet: true }));
     renderKpis();
     if (selectedId) { const a = findAgent(selectedId); if (a) renderPanel(a); } else renderPanelDefault();
@@ -938,6 +949,24 @@ async function openAudit() {
   }
   auditApi.start();
 }
+// הזמנת סוכן (agent self-registration): the panel's code and styles load on first open, never at page start.
+let inviteApi = null, inviteLoading = null;
+async function openInvite() {
+  openOverlay('#invite-ov');
+  if (!inviteApi) {
+    $('#invite-ov-body').innerHTML = '<div class="iv-empty">טוען…</div>';
+    try {
+      inviteLoading ||= Promise.all([
+        new Promise(res => { if (document.getElementById('invite-css')) return res(); const l = document.createElement('link'); l.id = 'invite-css'; l.rel = 'stylesheet'; l.href = './invite.css?v=3'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
+        import('./invite-view.js?v=3'),
+      ]);
+      const [, mod] = await inviteLoading;
+      inviteApi ||= mod.createInvite({ body: $('#invite-ov-body'), toast, onChanged: () => loadAgents(), onUnauthorized: () => onLoggedOut(true) });
+    } catch (e) { inviteLoading = null; console.warn(e); $('#invite-ov-body').innerHTML = '<div class="iv-empty">לא הצלחתי לטעון את ההזמנות. נסה שוב.</div>'; return; }
+  }
+  inviteApi.start();
+}
+$('#btn-invite')?.addEventListener('click', () => { if (!auth.loggedIn) { openLogin(); return; } openInvite(); });
 function openReviews(focus = null) { reviewFocus = focus; renderReviewOverlay(); openOverlay('#review-ov'); }
 function renderReviewOverlay() {
   const trend = reviewTrend(reviews);
@@ -1216,7 +1245,10 @@ function loadAssignMedia() {
 function openAssign(agentId = '') {
   const sel = $('#assign-agent');
   const list = LIVE.length ? LIVE : [];
-  sel.innerHTML = '<option value="all">כולם: Instinct, Hermes, Tab</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  const boardIds = ['instinct', 'hermes', 'tab', ...registeredAgents.filter(a => a.board && !a.disabled).map(a => a.id)];
+  const targets = list.filter(a => boardIds.includes(a.id));
+  const allNames = boardIds.map(id => (targets.find(a => a.id === id) || registeredAgents.find(a => a.id === id))?.name || id).join(', ');
+  sel.innerHTML = `<option value="all">כולם: ${esc(allNames)}</option>` + targets.map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
   assignRequestId = ''; assignFingerprint = '';
   $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
   media?.reset();

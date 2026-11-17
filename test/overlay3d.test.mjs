@@ -53,7 +53,7 @@ test('the cast follows the roster: demo names in demo, the live roster (<= 6) in
   assert.match(concept, /cast = list\.slice\(0, SLOTS\.length\)/);
   assert.match(concept, /if \(stage\) stage\.setCast\(cast, seats\)/);
   assert.match(stage, /for \(const \[id, p\] of chars\) if \(!list\.some\(a => a\.id === id/, 'people of agents that left are removed');
-  assert.match(main, /function castNow\(\) \{ return mode === 'live' \? LIVE : AGENTS; \}/);
+  assert.match(main, /function castNow\(\) \{ return mode === 'live' \? LIVE\.filter\(a => !registeredAgents\.some\(r => r\.id === a\.id && r\.disabled\)\) : AGENTS; \}/);
   // outfits come from the agent's own colours (skin, hair, accent), with fallbacks for live agents without them
   assert.match(stage, /agent\.color/); assert.match(stage, /agent\.skin/); assert.match(stage, /agent\.hair/);
 });
