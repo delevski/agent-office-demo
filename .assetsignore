@@ -18,3 +18,4 @@ package.json
 package-lock.json
 README.md
 audit-state.js
+wrangler.preview.toml

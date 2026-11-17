@@ -20,7 +20,7 @@ test('live mode takes its names from the live roster, never from the demo list',
   const liveNames = roster.live.map(a => a.name);
   assert.ok(liveNames.length && liveNames.every(n => !roster.agents.some(a => a.name === n)), 'live and demo names are different sets');
   // the cast the pills show is chosen by mode: LIVE when live, AGENTS when demo
-  assert.match(main, /function castNow\(\) \{ return mode === 'live' \? LIVE : AGENTS; \}/);
+  assert.match(main, /function castNow\(\) \{ return mode === 'live' \? LIVE\.filter\(a => !registeredAgents\.some\(r => r\.id === a\.id && r\.disabled\)\) : AGENTS; \}/);
   assert.match(main, /cv\.setCast\(castNow\(\)\)/);
   // pills are built from the agent objects (name, colour), no name literal anywhere in concept.js
   const cjs = read('concept.js');

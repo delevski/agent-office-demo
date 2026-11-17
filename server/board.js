@@ -10,17 +10,18 @@ export const TICKET_OPEN_MAX = 20;
 export const TICKET_DEPTH_MAX = 3;
 export const TICKET_NOTE_MAX = 1000;
 export const NOTE_MAX = 1500; // was 300: dictated notes and file descriptions need room
-export function parseBoardTask(body, known) {
+export function parseBoardTask(body, known, boardList = BOARD_AGENTS) {
   const title = typeof body?.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : '';
   const note = typeof body?.note === 'string' ? body.note.trim() : '';
-  const agents = body?.agent === 'all' ? BOARD_AGENTS : [body?.agent];
+  const assignable = boardList.filter(a => known.includes(a));
+  const agents = body?.agent === 'all' ? assignable : [body?.agent];
   const requestId = typeof body?.requestId === 'string' ? body.requestId : '';
   const attachments = Array.isArray(body?.attachments) ? [...new Set(body.attachments.map(String))] : [];
   const errors = [];
   if (!title || title.length > 160) errors.push('title: required, max 160');
   if (note.length > NOTE_MAX) errors.push('note: max ' + NOTE_MAX);
   if (attachments.length > MAX_FILES || attachments.some(id => !FILE_ID.test(id))) errors.push('attachments: max ' + MAX_FILES + ' valid ids');
-  if (agents.some(a => !BOARD_AGENTS.includes(a) || !known.includes(a))) errors.push('agent: unavailable');
+  if (agents.some(a => !boardList.includes(a) || !known.includes(a))) errors.push('agent: unavailable');
   if (!/^[a-zA-Z0-9-]{16,80}$/.test(requestId)) errors.push('requestId: required');
   return { title, note, agents, requestId, attachments, errors };
 }
@@ -37,7 +38,7 @@ export function boardReport(task, kind = 'task.queued') {
 }
 
 /** An agent's ticket for another agent. `from` always comes from the caller's token. */
-export function parseTicket(body, from, known) {
+export function parseTicket(body, from, known, boardList = BOARD_AGENTS) {
   const title = typeof body?.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : '';
   const note = typeof body?.note === 'string' ? body.note.trim() : '';
   const to = typeof body?.to === 'string' ? body.to.trim().toLowerCase() : '';
@@ -48,7 +49,7 @@ export function parseTicket(body, from, known) {
   if (!title || title.length > 160) errors.push('title: required, max 160');
   if (note.length > TICKET_NOTE_MAX) errors.push('note: max ' + TICKET_NOTE_MAX);
   if (rawRef && !(/^https?:\/\/\S+$/i.test(rawRef) && rawRef.length <= 500)) errors.push('link: an http(s) URL, max 500');
-  if (!BOARD_AGENTS.includes(to) || !known.includes(to)) errors.push('to: one of ' + BOARD_AGENTS.filter(a => known.includes(a)).join(', '));
+  if (!boardList.includes(to) || !known.includes(to)) errors.push('to: one of ' + boardList.filter(a => known.includes(a)).join(', '));
   else if (to === from) errors.push('to: a ticket must be for another agent, not yourself');
   if (typeof requestId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId)) errors.push('requestId: 16-80 letters, digits or dashes (omit it to get one)');
   if (parent && !/^board-[a-zA-Z0-9-]+$/.test(parent)) errors.push('parent: a board task id');
