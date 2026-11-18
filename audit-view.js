@@ -2,10 +2,10 @@
 // Renders GET /api/audit: one chronological timeline where a PR (or a board task) is ONE row whose steps expand on click,
 // and agent-to-agent messages are single rows. Filters: type, day, agent, PR/repo. All text goes through esc().
 const TZ = 'Asia/Jerusalem';
-const NAMES = { ori: 'אורי', instinct: 'Instinct', hermes: 'Hermes', tab: 'Tab', board: 'הלוח', legacy: 'מפתח כללי' };
+const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'Instinct', hermes: 'Hermes', tab: 'Tab', board: 'הלוח', legacy: 'מפתח כללי' };
 const CHANNELS = { whatsapp: 'WhatsApp', slack: 'Slack', imessage: 'iMessage', email: 'מייל', phone: 'טלפון', board: 'לוח', site: 'האתר', github: 'GitHub', handoff: 'העברה', other: 'אחר' };
 const PR_STATUS = { open: ['נפתח', 'st-open'], reviewed: ['נבדק', 'st-rev'], changes_requested: ['נדרשו תיקונים', 'st-warn'], approved: ['אושר', 'st-ok'], merged: ['מוזג', 'st-merged'], deployed: ['באוויר', 'st-live'] };
-const TASK_STATUS = { queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'] };
+const TASK_STATUS = { blocked: ['ממתין', 'st-warn'], queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'] };
 const VERDICT = { approved: ['אישר', 'v-ok'], changes_requested: ['ביקש תיקונים', 'v-warn'], commented: ['הגיב', 'v-note'] };
 const TYPES = [['', 'הכל'], ['pr', 'PR'], ['message', 'הודעות'], ['task', 'משימות'], ['deploy', 'פריסות']];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,7 +40,8 @@ function stepHtml(s) {
     case 'deploy': return row('rocket', 'k-dep', `<b dir="auto">${esc(who(s.actor))}</b> ${s.status === 'failed' ? 'פריסה נכשלה' : s.status === 'rolled_back' ? 'ביטל פריסה' : 'פרס'} · ${esc(s.target || '')}${s.sha ? ` · <span class="mono au-sha">${esc(String(s.sha).slice(0, 12))}</span>` : ''} ${by}`);
     case 'task.created': return row('plus', 'k-task', `<b dir="auto">${esc(who(s.actor))}</b> ${s.via === 'ticket' ? 'פתח טיקט' : 'יצר משימה'} ל-<b dir="auto">${esc(who(s.to))}</b>`, s.text ? `<div class="au-quote au-plain">${esc(s.text)}</div>` : '');
     case 'task.claimed': return row('inbox', 'k-task', `<b dir="auto">${esc(who(s.actor))}</b> לקח את המשימה`);
-    case 'task.done': return row('check', 'k-done', `<b dir="auto">${esc(who(s.actor))}</b> סיים`, s.text ? `<div class="au-quote au-plain">${esc(s.text)}</div>` : '');
+    case 'task.progress': return row('inbox', 'k-task', `<b dir="auto">${esc(who(s.actor))}</b> עדכן סטטוס`, `<div class="au-quote au-plain">${esc(s.text)}</div>`);
+    case 'task.done': return row('check', 'k-done', `<b dir="auto">${esc(who(s.actor))}</b> ${s.via === 'owner-reconciliation' ? 'רשם סיום בדיעבד' : 'סיים'}`, s.text ? `<div class="au-quote au-plain">${esc(s.text)}</div>` : '');
     case 'task.failed': return row('circle-x', 'k-bad', `<b dir="auto">${esc(who(s.actor))}</b> דיווח כשל`, s.text ? `<div class="au-quote au-plain">${esc(s.text)}</div>` : '');
     case 'task.cancelled': return row('x', 'k-bad', `<b dir="auto">${esc(who(s.actor))}</b> ביטל את המשימה`);
     default: return row('circle-dot', '', esc(s.type));

@@ -11,8 +11,8 @@
 <!-- the webfont must not block the first paint: it swaps in when it arrives -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap" media="print" onload="this.media='all'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&display=swap"></noscript>
-<link rel="stylesheet" href="./styles.css?v=39">
-<link rel="stylesheet" href="./concept.css?v=4">
+<link rel="stylesheet" href="./styles.css?v=40">
+<link rel="stylesheet" href="./concept.css?v=5">
 <meta name="theme-color" content="#f2f2f7">
 </head>
 <body class="cvx">
@@ -75,6 +75,7 @@
       <aside class="cpanel" id="cpanel" aria-label="לוח משימות">
         <div class="ph"><div class="ptitle"><svg class="ico" aria-hidden="true"><use href="#i-layout-dashboard"/></svg><span>לוח משימות</span><span class="psub" id="cp-sub"></span></div>
           <div class="pbtns"><button class="padd" id="cp-add" type="button"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg>משימה חדשה</button><button class="pclose" id="cp-close" type="button" aria-label="סגירה"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button></div></div>
+        <div id="cp-board-controls"></div>
         <div class="kb" id="cp-cols"></div>
         <div class="rev-wrap"><div class="rev-title"><svg class="ico" aria-hidden="true"><use href="#i-git-pull-request"/></svg>ביקורת קוד אחרונה</div><div class="rev" id="cp-review"></div></div>
         <div class="chatw"><div class="rev-title"><svg class="ico" aria-hidden="true"><use href="#i-message-circle"/></svg>שיחה בין הסוכנים</div><div id="cp-chat"></div></div>
@@ -176,6 +177,7 @@
       <button class="btn btn-gold live-only kb-add" id="btn-assign" type="button"><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">משימה חדשה</span></button>
       <button class="btn btn-ghost ov-close" type="button" data-close="#board-ov" aria-label="סגירה"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
+    <div id="board-ov-controls"></div>
     <div class="kb-cols" id="board-ov-cols"></div>
   </div>
 </div>
@@ -270,6 +272,6 @@
 
 
 
-<script type="module" src="./main.js?v=33"></script>
+<script type="module" src="./main.js?v=34"></script>
 </body>
 </html>

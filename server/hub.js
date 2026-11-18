@@ -205,13 +205,31 @@ export class EventHub {
       await this.addAudit([auditFromTask(task, 'created', now)]);
       return json({ ok: true, task: boardView(task, now) });
     }
+    // Owner-session reconciliation preserves the original assignment and prior result.
+    if (url.pathname === '/board/complete' && request.method === 'POST') {
+      const body = await request.json(), task = this.board.find(t => t.id === body.id);
+      if (!task) return json({ error: 'not found' }, 404);
+      const status = body.status || 'done', last = task.reconciliations?.at(-1);
+      if (last?.status === status && last?.result === body.result && last?.evidence === body.evidence) return json({ ok: true, duplicate: true, task: boardView(task, now) });
+      if (!['queued', 'running', 'blocked'].includes(task.status)) return json({ error: 'already settled' }, 409);
+      if (!body.result?.trim() || !body.evidence?.trim()) return json({ error: 'result and evidence required' }, 400);
+      const record = { status, actor: 'owner-session', via: 'owner-reconciliation', recordedAt: now, previousStatus: task.status, previousResult: task.result || '', result: body.result, evidence: body.evidence };
+      if (!['done', 'running', 'blocked'].includes(status)) return json({ error: 'invalid status' }, 400);
+      task.reconciliations ||= []; task.reconciliations.push(record);
+      if (status === 'done') task.completion = record;
+      task.status = status; task.updated = now; task.result = body.result;
+      await this.state.storage.put('board:' + task.id, task);
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, status === 'done' ? 'task.done' : 'task.progress')) }));
+      await this.addAudit([auditFromTask(task, status === 'done' ? 'done' : 'progress', now)]);
+      return json({ ok: true, task: boardView(task, now) });
+    }
     // The owner cancels a task nobody has finished (queued, running or blocked). The agent's later reports are refused.
     if (url.pathname === '/board/cancel' && request.method === 'POST') {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);
       if (!task) return json({ error: 'not found' }, 404);
       if (TERMINAL.includes(task.status)) return json({ error: 'already settled' }, 409);
       const wasRunning = task.status === 'running';
-      task.status = 'cancelled'; task.updated = now; task.result = 'בוטל על ידי אורי';
+      task.status = 'cancelled'; task.updated = now; task.result = 'בוטל דרך חיבור בעלים'; task.cancelledBy = 'owner-session';
       await this.state.storage.put('board:' + task.id, task);
       if (wasRunning) await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify({ ...boardReport(task, 'task.failed'), taskStatus: 'failed' }) }));
       await this.addAudit([auditFromTask(task, 'cancelled', now)]);

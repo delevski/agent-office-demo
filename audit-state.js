@@ -7,7 +7,7 @@
 import { str, agentId, link, parsePr, repoOf, prLink, eventTime, CHAT_MAX_LINES } from './office-state.js';
 import { dayOf, dayBounds } from './insights.js';
 
-export const AUDIT_TYPES = ['pr.opened', 'pr.reviewed', 'pr.approved', 'pr.merged', 'deploy', 'message', 'task.created', 'task.claimed', 'task.done', 'task.failed', 'task.cancelled'];
+export const AUDIT_TYPES = ['pr.opened', 'pr.reviewed', 'pr.approved', 'pr.merged', 'deploy', 'message', 'task.created', 'task.claimed', 'task.progress', 'task.done', 'task.failed', 'task.cancelled'];
 export const APPROVAL_CHANNELS = ['whatsapp', 'slack', 'imessage', 'email', 'phone', 'board', 'site', 'github', 'other'];
 export const MESSAGE_CHANNELS = ['slack', 'board', 'handoff', 'whatsapp', 'email', 'github', 'other'];
 export const AUDIT_ONLY_KINDS = ['pr.approved', 'message'];
@@ -125,8 +125,9 @@ export function auditFromTask(task, step, now = Date.now()) {
   const base = { task_id: task.id, title: str(task.title, 160), to: task.agent, link: task.ref || '' };
   if (step === 'created') return { ...base, id: `task:${task.id}:created`, ts: task.created, type: 'task.created', actor: ticket ? task.from : 'ori', reported_by: ticket ? task.from : 'board', via: ticket ? 'ticket' : 'owner', text: str(task.note, 200) };
   if (step === 'claimed') return { ...base, id: `task:${task.id}:claimed`, ts: now, type: 'task.claimed', actor: task.agent, reported_by: task.agent };
-  if (step === 'done' || step === 'failed') return { ...base, id: `task:${task.id}:${step}`, ts: now, type: 'task.' + step, actor: task.agent, reported_by: task.agent, status: task.status, text: str(task.result, 200), link: task.link || task.ref || '' };
-  if (step === 'cancelled') return { ...base, id: `task:${task.id}:cancelled`, ts: now, type: 'task.cancelled', actor: 'ori', reported_by: 'board' };
+  if (step === 'progress') { const r = task.reconciliations.at(-1); return { ...base, id: `task:${task.id}:progress:${task.reconciliations.length}`, ts: now, type: 'task.progress', actor: r.actor, reported_by: r.actor, via: r.via, status: task.status, text: str(task.result, 200), evidence: r.evidence }; }
+  if (step === 'done' || step === 'failed') return { ...base, id: `task:${task.id}:${step}`, ts: now, type: 'task.' + step, actor: task.completion?.actor || task.agent, reported_by: task.completion?.actor || task.agent, via: task.completion?.via || 'agent-report', evidence: task.completion?.evidence || '', status: task.status, text: str(task.result, 200), link: task.link || task.ref || '' };
+  if (step === 'cancelled') return { ...base, id: `task:${task.id}:cancelled`, ts: now, type: 'task.cancelled', actor: task.cancelledBy || 'ori', reported_by: 'board' };
   return null;
 }
 
@@ -157,6 +158,7 @@ export function prStatus(steps) {
 }
 export function taskStatus(steps) {
   const last = [...steps].sort((a, b) => a.ts - b.ts).pop();
+  if (last?.type === 'task.progress') return last.status;
   return { 'task.created': 'queued', 'task.claimed': 'running', 'task.done': 'done', 'task.failed': 'failed', 'task.cancelled': 'cancelled' }[last?.type] || 'queued';
 }
 function expandDeploys(events) {
