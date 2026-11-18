@@ -1,3 +1,4 @@
+import { displayName, displayText, displayRecord } from './display-labels.js?v=1';
 // main.js — UI, roster, live ingestion (WS + polling), demo simulation, feed, KPIs, chart,
 // Ori's login and the per-agent live panel.
 import { createRoomCore } from './room-core.js?v=1';
@@ -66,7 +67,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=24');
+    const r = await fetch('./roster.json?v=25');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -429,7 +430,7 @@ function logLine(agent, kind, val, he, ts) {
   const time = new Date(ts || Date.now()).toLocaleTimeString('he-IL', { hour12: false });
   const div = document.createElement('div');
   div.className = 'log-line fresh';
-  div.innerHTML = `<span class="log-time">[${time}]</span><span class="log-name" style="color:${agent.color}">${esc(agent.handle)}:</span> <span class="log-kind">${esc(kind)}</span> <span class="log-val">${esc(val)}</span> <span class="log-he">${esc(he)}</span>`;
+  div.innerHTML = `<span class="log-time">[${time}]</span><span class="log-name" style="color:${agent.color}">${esc(displayName(agent.id, agent.handle))}:</span> <span class="log-kind">${esc(kind)}</span> <span class="log-val">${esc(val)}</span> <span class="log-he">${esc(he)}</span>`;
   log.prepend(div);
   setTimeout(() => div.classList.remove('fresh'), 1600);
   while (log.children.length > 60) log.lastChild.remove();
@@ -572,7 +573,7 @@ function connectLive() {
   ws = sock;
   sock.onmessage = e => {
     try {
-      const m = JSON.parse(e.data);
+      const m = displayRecord(JSON.parse(e.data));
       if (m.type === 'event' && m.event) onLiveEvent(m.event);
       if (m.type === 'agent' && m.agent) onAgentUpdate(m.agent);
       if (m.type === 'review' && m.review) onReview(m.review);
@@ -586,7 +587,7 @@ async function apiGet(path) {
   const r = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
   if (r.status === 401) { onLoggedOut(true); return null; }
   if (!r.ok) throw new Error(path + ' ' + r.status);
-  return r.json();
+  return displayRecord(await r.json());
 }
 async function pollEvents(first = false) {
   if (!auth.loggedIn || mode !== 'live' || replay.active) return;
@@ -667,7 +668,7 @@ function createLiveAgent(handle, name) {
   for (const c of String(handle)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   const meta = addLiveCharacter({
     id: String(handle),
-    name: String(name || handle),
+    name: displayName(handle, String(name || handle)),
     role: 'סוכן',
     handle: String(handle),
     color: LIVE_COLORS[h % LIVE_COLORS.length],
@@ -877,7 +878,7 @@ function afterReviews() {
   if (!$('#review-ov').classList.contains('hidden')) renderReviewOverlay();
   if (selectedId) { const a = findAgent(selectedId); if (a?.live) renderPanel(a); }
 }
-function agentMeta(id) { return LIVE.find(x => x.id === id) || AGENTS.find(x => x.id === id) || { id, name: id, color: '#a89c86', role: '' }; }
+function agentMeta(id) { return LIVE.find(x => x.id === id) || AGENTS.find(x => x.id === id) || { id, name: displayName(id), color: '#a89c86', role: '' }; }
 function nameOf(id) { return agentMeta(id).name || id; }
 function trendChartSvg(trend, { W = 560, H = 190, focus = null, compact = false } = {}) {
   const series = trend.filter(s => s.points.length);
@@ -938,7 +939,7 @@ async function openAudit() {
     try {
       auditLoading ||= Promise.all([
         new Promise(res => { if (document.getElementById('audit-css')) return res(); const l = document.createElement('link'); l.id = 'audit-css'; l.rel = 'stylesheet'; l.href = './audit.css?v=1'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
-        import('./audit-view.js?v=3'),
+        import('./audit-view.js?v=4'),
       ]);
       const [, mod] = await auditLoading;
       auditApi ||= mod.createAudit({ body: $('#audit-ov-body'), filters: $('#audit-ov-filters'), sub: $('#audit-ov-sub'), load: qs => apiGet('./api/audit' + (qs ? '?' + qs : '')) });
@@ -1069,7 +1070,7 @@ async function openSummary() {
     const r = await fetch('./api/summary', { credentials: 'same-origin', cache: 'no-store' });
     if (!r.ok) throw new Error('summary ' + r.status);
     const s = await r.json();
-    $('#summary-text').textContent = s.text;
+    $('#summary-text').textContent = displayText(s.text);
     $('#summary-sub').textContent = `מ-${hhmm(s.since)} עד ${hhmm(s.until)} · מוכן לשליחה`;
   } catch (e) { $('#summary-text').textContent = 'לא הצלחנו לטעון את הסיכום. אפשר לנסות שוב.'; }
 }
@@ -1224,7 +1225,7 @@ function loadAssignMedia() {
 function openAssign(agentId = '') {
   const sel = $('#assign-agent');
   const list = LIVE.length ? LIVE : [];
-  sel.innerHTML = '<option value="all">כולם: Instinct, Hermes, Tab</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  sel.innerHTML = '<option value="all">כולם: inna, Hermes, tobi</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
   assignRequestId = ''; assignFingerprint = '';
   $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
   media?.reset();

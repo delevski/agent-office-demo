@@ -203,14 +203,16 @@ test('audit UI: renders a PR row with the approval quote and "reported by", esca
   globalThis.document = { activeElement: null, hidden: false };
   const body = els(), filters = els(), sub = els(), ts = Date.parse('2026-11-10T09:13:00Z');
   const data = { now: ts + 60000, total: 1, truncated: false, counts: { pr: 1, message: 0, task: 0, deploy: 0 }, days: [{ day: '2026-11-10', count: 2 }], agents: ['ori', 'tab'], repos: [],
-    items: [{ kind: 'pr', key: 'r#16', pr: '16', repo: 'o/r', title: '<img src=x onerror=alert(1)>', link: 'javascript:alert(1)', status: 'approved', ts, steps: [
-      { id: 'a', ts, type: 'pr.approved', actor: 'ori', reported_by: 'tab', channel: 'whatsapp', quote: '<script>x</script> תמזג' }] }] };
+    items: [{ kind: 'pr', key: 'r#16', pr: '16', repo: 'o/r', title: 'Tab <img src=x onerror=alert(1)>', link: 'javascript:alert(1)', status: 'approved', ts, steps: [
+      { id: 'a', ts, type: 'pr.approved', actor: 'ori', reported_by: 'tab', channel: 'whatsapp', quote: '<script>x</script> Tab תמזג' }] }] };
   const api = createAudit({ body, filters, sub, load: async () => data });
   await api.start(); await new Promise(r => setTimeout(r, 10)); api.stop();
   assert.ok(!/<img|<script/.test(body.innerHTML), 'markup is escaped'); assert.match(body.innerHTML, /&lt;script&gt;/);
   assert.match(body.innerHTML, /דווח ע״י tobi/); assert.match(body.innerHTML, /WhatsApp/); assert.match(body.innerHTML, /תמזג/);
   assert.ok(!/href="javascript:/.test(body.innerHTML), 'unsafe links are dropped');
   assert.match(body.innerHTML, /אושר/);
+  assert.match(body.innerHTML, /tobi &lt;img/);
+  assert.match(body.innerHTML, /Tab תמזג/, 'quoted source evidence stays verbatim');
 });
 
 test('board-agent client: ticket and audit helpers hit the documented endpoints with the agent token', async () => {

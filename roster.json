@@ -8,8 +8,8 @@
     {"id": "deepsi", "name": "Deepsi", "role": "סוכנת מחקר", "handle": "deepsi", "color": "#2cc0c0", "skin": "#c98e63", "hair": "#24201c", "longHair": false, "kinds": [["research.done", "סיכום מחקר מוכן", "+1"], ["doc.updated", "מסמך עודכן", "#"]], "emblem": {"mono": "D", "icon": "coin"}, "skills": ["מחקר מתחרים", "סיכומים", "מדריך API", "מקורות"], "demoTasks": ["עדכון מדריך ה-API", "מחקר מתחרים · סיכום"], "demoBoard": {"doing": null, "todo": [{"title": "עדכון מדריך ה-API", "when": "יום ד׳"}], "done": [{"title": "מחקר מתחרים · סיכום", "at": "09:15"}], "rank": 2}, "slot": 5}
   ],
   "live": [
-    {"id": "tab", "name": "tobi", "role": "עוזר אישי", "handle": "tab", "color": "#f7b84d", "skin": "#f2c9a4", "hair": "#2c2320", "longHair": false, "emblem": {"mono": "Tab", "icon": "tab"}},
-    {"id": "instinct", "name": "inna", "role": "סוכן פיתוח", "handle": "instinct", "color": "#4dc9f7", "skin": "#e8b48c", "hair": "#1f1a16", "longHair": false, "emblem": {"mono": "In", "icon": "spark"}},
+    {"id": "tab", "name": "tobi", "role": "עוזר אישי", "handle": "tab", "color": "#f7b84d", "skin": "#f2c9a4", "hair": "#2c2320", "longHair": false, "emblem": {"mono": "to", "icon": "tab"}},
+    {"id": "instinct", "name": "inna", "role": "סוכן פיתוח", "handle": "instinct", "color": "#4dc9f7", "skin": "#e8b48c", "hair": "#1f1a16", "longHair": false, "emblem": {"mono": "in", "icon": "spark"}},
     {"id": "hermes", "name": "Hermes", "role": "סוכן אישי", "handle": "hermes", "color": "#c986f2", "skin": "#d9a077", "hair": "#5a3d28", "longHair": true, "emblem": {"mono": "He", "icon": "wing"}}
   ]
 }
