@@ -253,3 +253,19 @@ curl -s $B/api/inbox -H "$T" -H "$J" -d '{"to":"instinct","title":"Deploy the ne
 ### Rollout (Instinct)
 
 Deploy only: `npx wrangler deploy` (or the Workers Builds push-to-main). No new binding, secret or migration: the new data is plain keys in the existing Durable Object, and nothing existing changes shape. Agents start filling the log as soon as they report the events above; until then the panel shows an empty state.
+
+
+### Board history and owner reconciliation
+
+The board opens on active work only. The History control is a reversible view of closed work already available to the board, not a deletion or archive migration. Failed work remains visible in the active view.
+
+The owner-session API supports retrospective bookkeeping without claiming an agent's execution receipt:
+
+- `POST /api/tasks/:id/status`: `{status: "running" | "blocked" | "done", result, evidence}`.
+- `POST /api/tasks/:id/complete`: `{result, evidence}` is the done-only alias.
+- Both require the normal owner session and same-origin checks. Result is required (max 2000 characters), and evidence is required (max 1000). Caller-provided actor fields are ignored. No agent token can use these routes.
+- Each change keeps the prior status/result and source evidence in `reconciliations`, records the authenticated capability as `owner-session`, and updates the audit trail. This does not authenticate a named human or claim the assigned agent reported the change.
+- Repeating the same most recent reconciliation is idempotent. Closed tasks cannot be overwritten or reopened through this route. The original assignment and agent receipts remain unchanged.
+- Existing cancellation records are left as history. New cancellations say owner session instead of asserting Ori personally clicked.
+
+These routes change records only. They do not execute tasks, merge code, deploy anything, post externally, or validate a caller's evidence. The caller must verify the work and its authority first.

@@ -280,3 +280,57 @@ test('board page: not-picked-up warning and owner-only ping button are wired to 
   assert.match(main, /waiting && auth\.loggedIn/, 'ping button only for the logged-in owner');
   assert.match(main, /from '\.\/board-state\.js\?v=1'/);
 });
+
+
+test('owner reconciliation: authenticated, evidenced, preserved and idempotent without impersonation', async () => {
+  const { call, create, restart } = await setup();
+  const task = (await json(await create('tab'))).tasks[0];
+  const path = '/api/tasks/' + task.id + '/complete';
+  const result = { result: 'Historical delivery verified; no new deployment.', evidence: 'Source execution report and current output checked.' };
+  assert.equal((await call(path, result, null)).status, 401);
+  assert.equal((await call(path, result, 'i')).status, 401);
+  assert.equal((await call(path, result, 'owner', { Origin: 'https://evil.test' })).status, 403);
+  assert.equal((await call(path, { result: 'unsupported' })).status, 400);
+  assert.equal((await call(path, { ...result, result: 'a'.repeat(2001) })).status, 400);
+  assert.equal((await call('/api/tasks/board-missing/complete', result)).status, 404);
+  const done = await json(await call(path, { ...result, actor: 'tab', reported_by: 'tab' }));
+  assert.equal(done.task.status, 'done'); assert.equal(done.task.agent, 'tab');
+  assert.equal(done.task.completion.actor, 'owner-session');
+  assert.equal(done.task.completion.previousStatus, 'queued');
+  assert.equal(done.task.completion.previousResult, '');
+  assert.equal(done.task.title, task.title); assert.equal(done.task.note, task.note);
+  assert.ok(!JSON.stringify(done).includes('claimToken'));
+  await restart();
+  assert.equal((await json(await call(path, result))).duplicate, true);
+  assert.equal((await call(path, { ...result, result: 'overwrite' })).status, 409);
+  assert.equal((await call('/api/inbox/' + task.id + '/claim', {}, 't')).status, 409);
+  const row = (await json(await call('/api/audit?type=task'))).items.find(r => r.key === task.id);
+  assert.ok(row);
+  const step = row.steps.find(s => s.type === 'task.done');
+  assert.equal(step.actor, 'owner-session'); assert.equal(step.reported_by, 'owner-session');
+  assert.equal(step.via, 'owner-reconciliation'); assert.equal(step.evidence, result.evidence);
+  const board = (await json(await call('/api/tasks'))).tasks[0];
+  assert.equal(board.completion.evidence, result.evidence);
+});
+
+
+test('owner progress is distinct from claiming, keeps all revisions and cannot reopen done', async () => {
+  const { call, create, restart } = await setup(); const task = (await json(await create('tab'))).tasks[0];
+  const path = '/api/tasks/' + task.id + '/status';
+  const first = { status: 'blocked', result: 'Waiting on a secure setup form.', evidence: 'Current private thread checked.' };
+  assert.equal((await call(path, first, 'i')).status, 401);
+  assert.equal((await call(path, { ...first, status: 'cancelled' })).status, 400);
+  const blocked = await json(await call(path, first));
+  assert.equal(blocked.task.status, 'blocked'); assert.ok(!blocked.task.completion);
+  assert.equal(blocked.task.reconciliations[0].actor, 'owner-session');
+  assert.equal((await json(await call(path, first))).duplicate, true);
+  await restart();
+  const second = { status: 'running', result: 'Testing now.', evidence: 'Local tests running.' };
+  const running = await json(await call(path, second));
+  assert.equal(running.task.reconciliations.length, 2);
+  assert.equal(running.task.reconciliations[1].previousStatus, 'blocked');
+  assert.equal(running.task.reconciliations[1].previousResult, first.result);
+  const final = { status: 'done', result: 'Verified delivery.', evidence: 'Current delivery verified.' };
+  assert.equal((await call(path, final)).status, 200);
+  assert.equal((await call(path, second)).status, 409);
+});

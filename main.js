@@ -5,6 +5,7 @@ import { createConcept } from './concept.js?v=5';
 import { cardModel, cardHtml, placeCard } from './agent-card.js?v=1';
 import { createBell } from './sound.js';
 import { notPickedUp, waitingMinutes } from './board-state.js?v=1';
+import { boardView } from './board-view.js?v=1';
 import { emblemSVG } from './emblems.js';
 import { agentAlert, alertLabel, durationHe, reviewTrend, severityCounts, ALERT_AFTER_MIN, SEVERITIES, meetingGroups, reliability, RELIABILITY } from './insights.js';
 import { applyReport, publicView as viewAt, feedNote, isFeedEvent, emptyAgent } from './office-state.js';
@@ -113,14 +114,21 @@ function cpWaitHtml(c) {
   const b = c.board; if (!isUnclaimed(b)) return '';
   return `<div class="kwarn" role="alert"><span>${ic('triangle-alert', 'inline')} לא נלקחה ${waitingMinutes(b)} דק׳</span>${auth.loggedIn && b.delivery !== 'error' ? `<button class="kping board-ping" type="button" data-task="${esc(b.id)}">פינג שוב</button>` : ''}</div>`;
 }
+let showBoardHistory = false;
+function historyControls(bd, location) {
+  const v = boardView(bd.columns, showBoardHistory);
+  return `<div class="board-view-controls"><button type="button" class="board-history-toggle" aria-pressed="${showBoardHistory}" aria-controls="${location}">${showBoardHistory ? 'חזרה למשימות פתוחות' : `היסטוריה (${v.historyCount})`}</button><span class="muted">${showBoardHistory ? 'היסטוריית המשימות הזמינה בלוח. שום רשומה לא נמחקת.' : `${v.activeCount} משימות פתוחות · משימות סגורות מוסתרות`}</span></div>`;
+}
 function renderCPanel() {
   const root = $('#cpanel'); if (!root || !cv) return;
   const bd = boardData();
   const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
-  const total = bd.columns.todo.length + bd.columns.doing.length + bd.columns.done.length;
-  $('#cp-sub').textContent = `${castNow().length} סוכנים · ${total} משימות`;
-  $('#cp-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
-    const list = bd.columns[k].slice(0, k === 'done' ? 4 : 5);
+  const view = boardView(bd.columns, showBoardHistory);
+  $('#cp-sub').textContent = `${castNow().length} סוכנים · ${view.activeCount} פתוחות`;
+  $('#cp-board-controls').innerHTML = historyControls(bd, 'cp-cols');
+  $('#cp-cols').classList.toggle('history-view', showBoardHistory);
+  $('#cp-cols').innerHTML = view.keys.map(k => {
+    const list = bd.columns[k].slice(0, k === 'done' ? 20 : 5);
     const label = c => k === 'doing' ? relMin(c.since || c.ts) : (c.when || (k === 'done' ? when(c.ts) : ''));
     return `<div class="kcol k-${k}"><div class="khead"><span class="kdot"></span>${names[k]}<span class="kcount">${bd.columns[k].length}</span></div>`
       + (list.length ? list.map(c => `<div class="kcard"><div class="kt">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div><div class="km">${chip(c.agent)}<span class="when">${esc(label(c))}</span></div>${k === 'todo' ? cpWaitHtml(c) : ''}</div>`).join('')
@@ -930,7 +938,7 @@ async function openAudit() {
     try {
       auditLoading ||= Promise.all([
         new Promise(res => { if (document.getElementById('audit-css')) return res(); const l = document.createElement('link'); l.id = 'audit-css'; l.rel = 'stylesheet'; l.href = './audit.css?v=1'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
-        import('./audit-view.js?v=1'),
+        import('./audit-view.js?v=2'),
       ]);
       const [, mod] = await auditLoading;
       auditApi ||= mod.createAudit({ body: $('#audit-ov-body'), filters: $('#audit-ov-filters'), sub: $('#audit-ov-sub'), load: qs => apiGet('./api/audit' + (qs ? '?' + qs : '')) });
@@ -1475,7 +1483,7 @@ function boardData() {
       const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to, assigned: t.assigned, note: t.note, board: t.board, id: t.id };
       card.when = card.ts ? when(card.ts) : '';
       if (t.status === 'running') cols.doing.push(card);
-      else if (t.status === 'queued' || t.status === 'blocked') cols.todo.push(card);
+      else if (t.status === 'queued' || t.status === 'blocked' || t.status === 'failed') cols.todo.push(card);
       else cols.done.push(card);
     }
   }
@@ -1516,8 +1524,11 @@ function openShelves() { renderShelfOverlay(); openOverlay('#shelf-ov'); }
 function renderBoardOverlay() {
   const bd = boardData();
   $('#board-ov-sub').textContent = bd.demo ? 'דמו · משימות לדוגמה, לא נתונים אמיתיים' : 'חי · משימות הלוח ממתינות לאיסוף (בדיקה כל 5 דקות). סיום רק אחרי דיווח עם תוצאה.';
-  const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'הושלם' };
-  $('#board-ov-cols').innerHTML = ['todo', 'doing', 'done'].map(k => {
+  const names = { todo: 'לביצוע', doing: 'בעבודה', done: 'היסטוריית משימות סגורות' };
+  const view = boardView(bd.columns, showBoardHistory);
+  $('#board-ov-controls').innerHTML = historyControls(bd, 'board-ov-cols');
+  $('#board-ov-cols').classList.toggle('history-view', showBoardHistory);
+  $('#board-ov-cols').innerHTML = view.keys.map(k => {
     const list = bd.columns[k];
     return `<section class="kb-col kb-${k}" aria-label="${names[k]}">
       <h4><span class="kb-dot"></span>${names[k]} <span class="kb-count">${list.length}</span></h4>
@@ -1537,7 +1548,7 @@ function boardStatusHtml(c) {
   if (!c.board) return '';
   const b = c.board;
   const waiting = isUnclaimed(b);
-  const label = b.status === 'running' ? 'הסוכן קיבל ועובד' : b.status === 'done' ? 'הסוכן דיווח שהושלם' : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.status === 'cancelled' ? 'בוטלה על ידי אורי' : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
+  const label = b.status === 'running' ? (b.reconciliations?.at(-1)?.status === 'running' ? 'בעבודה · סטטוס עודכן דרך חיבור בעלים' : 'הסוכן קיבל ועובד') : b.status === 'done' ? (b.completion ? 'נסגר בדיעבד דרך חיבור בעלים' : 'הסוכן דיווח שהושלם') : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.status === 'cancelled' ? (b.cancelledBy ? 'בוטלה דרך חיבור בעלים' : 'בוטלה על ידי אורי') : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
   const warn = waiting ? `<div class="board-warn" role="alert"><span class="bw-ic">${ic('triangle-alert', 'inline')}</span> לא נלקחה כבר ${waitingMinutes(b)} דקות${b.pings ? ` · נשלח פינג ${b.pings > 1 ? b.pings + ' פעמים' : 'פעם אחת'}` : ''}</div>` : '';
   const retry = b.delivery === 'error' && b.status === 'queued';
   const cancel = auth.loggedIn && ['queued', 'running', 'blocked'].includes(b.status) ? `<button class="btn btn-ghost board-cancel" data-task="${esc(b.id)}">ביטול משימה</button>` : '';
@@ -1568,6 +1579,13 @@ function onBoardAction(e) {
     await loadAgents(); renderBoardOverlay(); renderCPanel();
   });
 }
+document.addEventListener('click', e => {
+  if (!e.target.closest('.board-history-toggle')) return;
+  const controls = e.target.closest('#cp-board-controls') ? '#cp-board-controls' : '#board-ov-controls';
+  showBoardHistory = !showBoardHistory;
+  renderBoardOverlay(); renderCPanel();
+  document.querySelector(controls + ' .board-history-toggle')?.focus();
+});
 $('#board-ov-cols').addEventListener('click', onBoardAction);
 $('#cp-cols')?.addEventListener('click', onBoardAction);
 // "not picked up" is a function of time: re-evaluate once a minute, and only while the board is open.

@@ -204,6 +204,22 @@ export default {
     // "Ping again": the owner re-sends the Slack wake. /retry = only after a failed send (old behaviour, same route);
     // /ping = any still-unclaimed queued task (the "not picked up" warning's button). Both re-post straight from the
     // Worker when SLACK_NOTIFY_TOKEN is set; without it the task goes back to delivery=pending for the Instinct relay.
+    // Retrospective reconciliation, never an agent execution report.
+    const complete = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/(complete|status)$/.exec(path);
+    if (complete && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ error: 'login required' }, 401);
+      if (request.headers.get('Origin') && request.headers.get('Origin') !== url.origin) return privateJson({ error: 'bad origin' }, 403);
+      let body;
+      try { body = await readJson(request); } catch { return privateJson({ error: 'invalid JSON' }, 400); }
+      if (typeof body?.result !== 'string' || !body.result.trim() || body.result.length > 2000 ||
+          typeof body?.evidence !== 'string' || !body.evidence.trim() || body.evidence.length > 1000) {
+        return privateJson({ error: 'result and evidence required (max 2000 / 1000 characters)' }, 400);
+      }
+      const status = complete[2] === 'complete' ? 'done' : body.status;
+      if (!['done', 'running', 'blocked'].includes(status)) return privateJson({ error: 'status must be running, blocked or done' }, 400);
+      const res = await hub(env).fetch('https://hub/board/complete', { method: 'POST', body: JSON.stringify({ id: complete[1], status, result: body.result.trim(), evidence: body.evidence.trim() }) });
+      return privateJson(await res.json(), res.status);
+    }
     const cancel = /^\/api\/tasks\/(board-[a-zA-Z0-9-]+)\/cancel$/.exec(path);
     if (cancel && request.method === 'POST') {
       if (!(await isLoggedIn(request, env))) return privateJson({ error: 'login required' }, 401);
