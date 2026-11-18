@@ -208,7 +208,7 @@ test('audit UI: renders a PR row with the approval quote and "reported by", esca
   const api = createAudit({ body, filters, sub, load: async () => data });
   await api.start(); await new Promise(r => setTimeout(r, 10)); api.stop();
   assert.ok(!/<img|<script/.test(body.innerHTML), 'markup is escaped'); assert.match(body.innerHTML, /&lt;script&gt;/);
-  assert.match(body.innerHTML, /דווח ע״י Tab/); assert.match(body.innerHTML, /WhatsApp/); assert.match(body.innerHTML, /תמזג/);
+  assert.match(body.innerHTML, /דווח ע״י tobi/); assert.match(body.innerHTML, /WhatsApp/); assert.match(body.innerHTML, /תמזג/);
   assert.ok(!/href="javascript:/.test(body.innerHTML), 'unsafe links are dropped');
   assert.match(body.innerHTML, /אושר/);
 });

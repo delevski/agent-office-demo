@@ -106,3 +106,13 @@ test('v7: reliability remains and owner tasks use a durable inbox, not direct cl
   const readme = read('README.md');
   assert.ok(readme.includes('/api/tasks') && readme.includes('Reliability'));
 });
+
+
+test('display rename keeps stable identities, handles, visual marks and other roster data', () => {
+ const r=JSON.parse(read('roster.json'));
+ const names=Object.fromEntries(r.live.map(a=>[a.id,a.name]));
+ assert.deepEqual(names,{tab:'tobi',instinct:'inna',hermes:'Hermes'});
+ assert.deepEqual(r.live.map(a=>a.handle),['tab','instinct','hermes']);
+ assert.equal(r.live.find(a=>a.id==='tab').emblem.mono,'Tab');
+ assert.equal(r.live.find(a=>a.id==='instinct').emblem.mono,'In');
+});

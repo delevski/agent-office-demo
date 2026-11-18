@@ -2,7 +2,7 @@
 // Renders GET /api/audit: one chronological timeline where a PR (or a board task) is ONE row whose steps expand on click,
 // and agent-to-agent messages are single rows. Filters: type, day, agent, PR/repo. All text goes through esc().
 const TZ = 'Asia/Jerusalem';
-const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'Instinct', hermes: 'Hermes', tab: 'Tab', board: 'הלוח', legacy: 'מפתח כללי' };
+const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'inna', hermes: 'Hermes', tab: 'tobi', board: 'הלוח', legacy: 'מפתח כללי' };
 const CHANNELS = { whatsapp: 'WhatsApp', slack: 'Slack', imessage: 'iMessage', email: 'מייל', phone: 'טלפון', board: 'לוח', site: 'האתר', github: 'GitHub', handoff: 'העברה', other: 'אחר' };
 const PR_STATUS = { open: ['נפתח', 'st-open'], reviewed: ['נבדק', 'st-rev'], changes_requested: ['נדרשו תיקונים', 'st-warn'], approved: ['אושר', 'st-ok'], merged: ['מוזג', 'st-merged'], deployed: ['באוויר', 'st-live'] };
 const TASK_STATUS = { blocked: ['ממתין', 'st-warn'], queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'] };

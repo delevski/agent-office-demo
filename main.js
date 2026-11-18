@@ -66,7 +66,7 @@ function bootSet(pct, text) { bootFill.style.width = pct + '%'; bootStep.textCon
 let office = null;
 async function loadRoster() {
   try {
-    const r = await fetch('./roster.json?v=23');
+    const r = await fetch('./roster.json?v=24');
     if (!r.ok) throw new Error('roster ' + r.status);
     const d = await r.json();
     if (!Array.isArray(d.agents) || !d.agents.length) throw new Error('empty roster');
@@ -938,7 +938,7 @@ async function openAudit() {
     try {
       auditLoading ||= Promise.all([
         new Promise(res => { if (document.getElementById('audit-css')) return res(); const l = document.createElement('link'); l.id = 'audit-css'; l.rel = 'stylesheet'; l.href = './audit.css?v=1'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
-        import('./audit-view.js?v=2'),
+        import('./audit-view.js?v=3'),
       ]);
       const [, mod] = await auditLoading;
       auditApi ||= mod.createAudit({ body: $('#audit-ov-body'), filters: $('#audit-ov-filters'), sub: $('#audit-ov-sub'), load: qs => apiGet('./api/audit' + (qs ? '?' + qs : '')) });
