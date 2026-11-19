@@ -1,8 +1,9 @@
+import { displayRecord } from './display-labels.js?v=1';
 // audit-view.js — the "בקרה" panel (owner only). Lazy-loaded by main.js on first open; no dependencies.
 // Renders GET /api/audit: one chronological timeline where a PR (or a board task) is ONE row whose steps expand on click,
 // and agent-to-agent messages are single rows. Filters: type, day, agent, PR/repo. All text goes through esc().
 const TZ = 'Asia/Jerusalem';
-const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'Instinct', hermes: 'Hermes', tab: 'Tab', board: 'הלוח', legacy: 'מפתח כללי' };
+const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'inna', hermes: 'Hermes', tab: 'tobi', board: 'הלוח', legacy: 'מפתח כללי' };
 const CHANNELS = { whatsapp: 'WhatsApp', slack: 'Slack', imessage: 'iMessage', email: 'מייל', phone: 'טלפון', board: 'לוח', site: 'האתר', github: 'GitHub', handoff: 'העברה', other: 'אחר' };
 const PR_STATUS = { open: ['נפתח', 'st-open'], reviewed: ['נבדק', 'st-rev'], changes_requested: ['נדרשו תיקונים', 'st-warn'], approved: ['אושר', 'st-ok'], merged: ['מוזג', 'st-merged'], deployed: ['באוויר', 'st-live'] };
 const TASK_STATUS = { blocked: ['ממתין', 'st-warn'], queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'] };
@@ -25,7 +26,8 @@ const a = (url, text) => safeUrl(url) ? `<a href="${esc(safeUrl(url))}" target="
 const chip = (map, k) => { const [t, c] = map[k] || [k, 'st-open']; return `<span class="au-chip ${c}">${esc(t)}</span>`; };
 
 /* ---------- one step of a PR / task ---------- */
-function stepHtml(s) {
+function stepHtml(original) {
+  const s = displayRecord(original);
   const t = fmtTime(s.ts), by = s.reported_by && s.reported_by !== s.actor ? `<span class="au-rep" title="הסוכן שדיווח על הפעולה">דווח ע״י ${esc(who(s.reported_by))}</span>` : '';
   const row = (icon, cls, main, extra = '') => `<li class="au-step ${cls}"><span class="au-dot">${ic(icon)}</span><div class="au-sb"><div class="au-sline"><span class="au-sm">${main}</span><span class="au-time">${esc(t)}</span></div>${extra}</div></li>`;
   switch (s.type) {
@@ -109,7 +111,7 @@ export function createAudit({ body, filters, sub, load }) {
   }
   async function refresh() {
     const my = ++seq; state.busy = true;
-    try { const d = await load(query()); if (my !== seq || !d) return; state.data = d; state.err = ''; } catch (e) { if (my === seq) state.err = 'לא הצלחתי לטעון את יומן הבקרה'; }
+    try { const d = await load(query()); if (my !== seq || !d) return; state.data = displayRecord(d); state.err = ''; } catch (e) { if (my === seq) state.err = 'לא הצלחתי לטעון את יומן הבקרה'; }
     state.busy = false; render();
   }
   function renderFilters() {

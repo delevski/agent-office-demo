@@ -12,7 +12,7 @@ test('every roster agent has an emblem with a known icon; Tab / Instinct / Herme
     assert.ok(ICONS[a.emblem.icon], `${a.id}: icon ${a.emblem.icon}`);
   }
   const live = Object.fromEntries(roster.live.map(a => [a.id, a.emblem]));
-  assert.equal(live.tab.mono, 'Tab');
+  assert.equal(live.tab.mono, 'to');
   assert.equal(live.hermes.icon, 'wing'); // winged messenger, ready for when Hermes joins
   assert.notEqual(live.instinct.icon, live.tab.icon);
 });
