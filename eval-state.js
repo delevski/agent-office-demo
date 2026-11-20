@@ -48,7 +48,16 @@ export function checkAssertion(spec, ev) {
 }
 
 /** Validate + normalize an `eval.result` ingest body. Never trusts a reported `passed` for a computable assertion. */
-export function parseEvalResult(body, sender, now = Date.now(), source = 'self') {
+/** Stable fingerprint of what a human reviewed. A replaced run with different content gets a different hash, so an old verdict stops applying. */
+export function evalContentHash(r) {
+  const j = JSON.stringify([r.scenario, r.variant, r.stage, r.agent, r.reported_by, r.output, r.tools, r.duration_ms ?? null, (r.assertions || []).map(a => [a.id, a.kind, a.passed, a.value ?? '', a.evidence ?? '', a.judge?.score ?? null])]);
+  let h = 0x811c9dc5; for (let i = 0; i < j.length; i++) { h ^= j.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0') + j.length.toString(16);
+}
+
+/** Attribution: `reported_by` is always the authenticated poster. A self report is ALWAYS about the poster (body.agent is ignored).
+ *  Only an owner-designated evaluator (source 'evaluator') may name a different subject agent, which must be a known agent (`knownAgents`). */
+export function parseEvalResult(body, sender, now = Date.now(), source = 'self', knownAgents = null) {
   const errors = [];
   const scenario = slug(body.scenario ?? body.scenario_id);
   if (!scenario) errors.push('scenario: required');
@@ -91,20 +100,30 @@ export function parseEvalResult(body, sender, now = Date.now(), source = 'self')
     const mismatch = typeof a.passed === 'boolean' && a.passed !== r.passed;
     assertions.push({ id, kind, label, type: 'deterministic', basis: 'recomputed', passed: r.passed, evidence: r.evidence, value, ...(mismatch ? { reported_mismatch: true } : {}) });
   });
+  let subject = sender;
+  if (source === 'evaluator' && body.agent !== undefined && body.agent !== '') {
+    subject = agentId(body.agent);
+    if (!subject || (knownAgents && !knownAgents.includes(subject))) errors.push('agent: the evaluated agent must be a known agent id');
+  }
   const stageIn = STAGES.includes(str(body.stage, 12)) ? str(body.stage, 12) : 'execution';
   if (stageIn === 'code' && !assertions.some(a => a.kind === 'state_check'))
     errors.push('stage code: needs at least one state_check (a real end-state check such as the tests or the build, with its exit code as evidence). Text or tool-presence checks do not measure code quality');
   if (errors.length) return { errors };
   const ts = Number.isFinite(Number(body.ts)) && Number(body.ts) > 0 && Number(body.ts) <= now + 60_000 ? Number(body.ts) : now;
-  return { errors, result: {
-    id: `${source}:${scenario}:${variant.label}:${run_id}`, ts, type: 'eval.result', source: source === 'evaluator' ? 'evaluator' : 'self', scenario, title: oneLine(body.title || scenario, 120),
+  const result = {
+    id: `${source}:${sender}:${scenario}:${variant.label}:${run_id}`, ts, type: 'eval.result', source: source === 'evaluator' ? 'evaluator' : 'self', scenario, title: oneLine(body.title || scenario, 120),
     tags: (Array.isArray(body.tags) ? body.tags : []).slice(0, 8).map(t => slug(t, 30)).filter(Boolean),
     stage: STAGES.includes(str(body.stage, 12)) ? str(body.stage, 12) : 'execution',
     run_id, attempt: Math.min(Math.max(1, Math.floor(Number(body.attempt) || 1)), 1000),
-    agent: agentId(body.agent) || sender, reported_by: sender, variant,
+    agent: subject, reported_by: sender, variant,
     trigger: oneLine(body.trigger, 500), output, tools, ...(duration_ms !== undefined ? { duration_ms } : {}), assertions,
-  } };
+  };
+  result.content_hash = evalContentHash(result);
+  return { errors, result };
 }
+
+/** A human verdict applies only while the run content is the one that was reviewed. */
+export const liveReview = (r, rev) => (rev && rev.hash && rev.hash === r.content_hash ? rev : null);
 
 export function runVerdicts(r, review) {
   const det = r.assertions.filter(a => a.type === 'deterministic'), jd = r.assertions.filter(a => a.type === 'judge');
@@ -131,7 +150,7 @@ export function buildEvals(results, reviews = {}, q = {}, now = Date.now()) {
     for (const r of rs) { const k = r.variant.label; if (!byVar.has(k)) byVar.set(k, []); byVar.get(k).push(r); }
     const variants = [...byVar.entries()].map(([label, runs]) => {
       runs.sort((a, b) => b.ts - a.ts);
-      const vs = runs.map(r => ({ r, v: runVerdicts(r, reviews[r.id]) }));
+      const vs = runs.map(r => ({ r, rv: liveReview(r, reviews[r.id]), stale: !!reviews[r.id] && !liveReview(r, reviews[r.id]) })).map(x => ({ ...x, v: runVerdicts(x.r, x.rv) }));
       const ev = vs.filter(x => x.r.source === 'evaluator'), self = vs.filter(x => x.r.source !== 'evaluator');
       const judged = vs.filter(x => x.v.judge !== 'not_run');
       const humans = vs.filter(x => x.v.human !== 'pending');
@@ -146,7 +165,7 @@ export function buildEvals(results, reviews = {}, q = {}, now = Date.now()) {
         human: { n: humans.length, k: humans.filter(x => x.v.human === 'pass').length, pending: vs.length - humans.length },
         top_failures: Object.values(fails).sort((a, b) => b.count - a.count).slice(0, 3),
         mismatches: vs.reduce((s, { r }) => s + r.assertions.filter(a => a.reported_mismatch).length, 0),
-        runs: vs.slice(0, RUNS_SHOWN).map(({ r, v }) => ({ id: r.id, source: r.source, ts: r.ts, attempt: r.attempt, run_id: r.run_id, agent: r.agent, reported_by: r.reported_by, trigger: r.trigger, output: r.output, tools: r.tools, duration_ms: r.duration_ms ?? null, verdicts: v, review: reviews[r.id] || null, assertions: r.assertions })),
+        runs: vs.slice(0, RUNS_SHOWN).map(({ r, v, rv, stale }) => ({ id: r.id, source: r.source, ts: r.ts, attempt: r.attempt, run_id: r.run_id, agent: r.agent, reported_by: r.reported_by, trigger: r.trigger, output: r.output, tools: r.tools, duration_ms: r.duration_ms ?? null, verdicts: v, review: rv || null, review_stale: stale, assertions: r.assertions })),
       };
     }).sort((a, b) => b.last_ts - a.last_ts);
     return { scenario, stage: rs[0].stage || 'execution', title: rs[0].title, tags: [...new Set(rs.flatMap(r => r.tags))], runs: rs.length, last_ts: Math.max(...rs.map(r => r.ts)), variants };
@@ -183,6 +202,7 @@ export function parseReview(body, now = Date.now()) {
  *                       incomplete. Missing evidence is not a violation: listed, not counted.
  *  Cancelled tasks and unfinished tasks are skipped. pct = clean / (clean + no_result + reported_failed). The content of a result is the
  *  agent's own words: this checks the recorded PROCESS and says nothing about whether the result is correct. */
+export const TEST_PREFIX = '[בדיקת אמינות]';
 export function executionFromAudit(events) {
   const byTask = new Map();
   for (const e of events || []) {
@@ -200,13 +220,17 @@ export function executionFromAudit(events) {
     else if (end.via === 'owner-reconciliation' || end.actor !== to) status = 'owner_backfill';
     else if (end.type === 'task.failed') status = 'reported_failed';
     else status = String(end.text || '').trim() ? 'clean' : 'no_result';
-    tasks.push({ task_id, title: end.title || evs[0].title || task_id, agent: to, ts: end.ts, status, progress_updates: evs.filter(e => e.type === 'task.progress').length });
+    const title = end.title || evs[0].title || task_id;
+    tasks.push({ task_id, title, agent: to, ts: end.ts, status, ...(title.startsWith(TEST_PREFIX) ? { test: true, result: String(end.text || '') } : {}), progress_updates: evs.filter(e => e.type === 'task.progress').length });
     const a = agents.get(to) || { agent: to, clean: 0, no_result: 0, reported_failed: 0, owner_backfill: 0, unknown: 0 };
     a[status]++;
     agents.set(to, a);
   }
   tasks.sort((a, b) => b.ts - a.ts);
   const list = [...agents.values()].map(a => { const n = a.clean + a.no_result + a.reported_failed; return { ...a, n, pct: n ? Math.round(1000 * a.clean / n) / 10 : null }; }).sort((x, y) => (y.n + y.owner_backfill + y.unknown) - (x.n + x.owner_backfill + x.unknown));
-  return { source: 'office-recorded', agents: list, tasks: tasks.slice(0, 40), total: tasks.length, retention_days: AUDIT_DAYS_NOTE };
+  const pending = [...byTask.entries()].filter(([, evs]) => evs.some(e => e.type === 'task.created') && !evs.some(e => ['task.done', 'task.failed', 'task.cancelled'].includes(e.type)) && String(evs[0].title || '').startsWith(TEST_PREFIX))
+    .map(([task_id, evs]) => ({ task_id, title: evs[0].title, agent: evs[0].to, ts: evs[0].ts, claimed: evs.some(e => e.type === 'task.claimed') })).sort((a, b) => b.ts - a.ts).slice(0, 10);
+  const tests = tasks.filter(t => t.test), tn = tests.filter(t => ['clean', 'no_result', 'reported_failed'].includes(t.status));
+  return { source: 'office-recorded', agents: list, tests: { pending, n: tn.length, clean: tn.filter(t => t.status === 'clean').length, pct: tn.length ? Math.round(1000 * tn.filter(t => t.status === 'clean').length / tn.length) / 10 : null, items: tests.slice(0, 10) }, tasks: tasks.slice(0, 40), total: tasks.length, retention_days: AUDIT_DAYS_NOTE };
 }
 const AUDIT_DAYS_NOTE = 30;

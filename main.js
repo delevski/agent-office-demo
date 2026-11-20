@@ -961,6 +961,21 @@ async function openEval() {
       const [, mod] = await evalLoading;
       evalApi ||= mod.createEval({ body: $('#eval-ov-body'), filters: $('#eval-ov-filters'), sub: $('#eval-ov-sub'),
         load: qs => apiGet('./api/evals' + (qs ? '?' + qs : '')),
+        testAgents: () => LIVE.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => ({ id: a.id, name: a.name })), // same recipients as the "give a task" form
+        createTest: async agent => {
+          // One requestId per pending attempt, kept in sessionStorage: a retry or a reload after an unknown outcome reuses it, and the board dedupes by requestId.
+          const key = 'evtest:' + agent;
+          let requestId = ''; try { requestId = sessionStorage.getItem(key) || ''; } catch { /* private mode */ }
+          if (!requestId) { requestId = crypto.randomUUID(); try { sessionStorage.setItem(key, requestId); } catch { /* ignore */ } }
+          const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId, agent,
+            title: '[בדיקת אמינות] סכם בשורה אחת מה פתוח בלוח',
+            note: 'משימת בדיקה מהפאנל בדיקות אמינות. החזר שורה אחת בלבד שמסכמת אילו משימות פתוחות יש בלוח, ודווח אותה כתוצאה. אל תבצע פעולות חיצוניות, אל תשלח הודעות ואל תשנה קבצים או חשבונות.' }) });
+          const d = await r.json().catch(() => ({}));
+          if (r.status === 401) { onLoggedOut(true); throw new Error('login'); }
+          if (!r.ok || !d.ok) throw new Error('task ' + r.status);
+          try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+          return { duplicate: !!d.duplicate };
+        },
         review: async b => { const r = await fetch('./api/evals/review', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); if (!r.ok) throw new Error('review ' + r.status); } });
     } catch (e) { evalLoading = null; console.warn(e); $('#eval-ov-body').innerHTML = '<div class="au-empty">לא הצלחתי לטעון את הבדיקות. נסה שוב.</div>'; return; }
   }

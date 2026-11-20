@@ -45,3 +45,6 @@
 .ev-cnt{font-size:.82rem;color:var(--muted);font-variant-numeric:tabular-nums;margin-inline-end:6px}.ev-none{font-size:.95rem;color:#48484a}
 .ev-frac{color:#1d1d1f}.ev-none{color:#48484a}
 @media (max-width:640px){#eval-ov .ov-card{padding:14px 12px 10px}.ev-scn{padding:11px 11px}.ev-frac{font-size:1.1rem}.ev-btns button{padding:8px 14px}}
+
+.ev-hv select{font:inherit;font-weight:600;font-size:.85rem;color:var(--text);background:rgba(120,120,128,.1);border:1px solid transparent;border-radius:10px;padding:7px 10px;min-width:104px;-webkit-appearance:none;appearance:none;padding-inline-end:26px;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-size:5px 5px;background-repeat:no-repeat;background-position:calc(10px) 55%,calc(15px) 55%}
+.ev-hv select:focus{outline:2px solid var(--accent);outline-offset:1px}

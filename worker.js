@@ -81,7 +81,7 @@ async function ingestEval(request, env, asEvaluator) {
   if (asEvaluator && !evaluatorAgents(env).includes(who.agent)) return json({ ok: false, error: 'not an evaluator agent' }, 403);
   let body;
   try { body = await readJson(request); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
-  const parsed = parseEvalResult(body, who.agent, Date.now(), asEvaluator ? 'evaluator' : 'self');
+  const parsed = parseEvalResult(body, who.agent, Date.now(), asEvaluator ? 'evaluator' : 'self', tokenAgents(env));
   if (parsed.errors.length) return json({ ok: false, error: 'invalid eval.result', details: parsed.errors }, 400);
   const res = await hub(env).fetch('https://hub/eval/add', { method: 'POST', body: JSON.stringify({ results: [parsed.result] }) });
   return json({ ok: res.ok, kind: 'eval.result', eval_id: parsed.result.id, source: parsed.result.source, reported_by: who.agent }, res.status);

@@ -166,7 +166,10 @@ export class EventHub {
     if (url.pathname === '/eval/review' && request.method === 'POST') {
       const r = await request.json();
       const cur = (await this.state.storage.get('evalreviews')) || {};
-      if (r.verdict === 'clear') delete cur[r.id]; else cur[r.id] = { verdict: r.verdict, note: r.note, ts: r.ts };
+      let run = null;
+      for (const v of (await this.state.storage.list({ prefix: 'eval:' })).values()) { const f = v.find(e => e.id === r.id); if (f) run = f; }
+      if (!run) return json({ ok: false, error: 'unknown run' }, 404);
+      if (r.verdict === 'clear') delete cur[r.id]; else cur[r.id] = { verdict: r.verdict, note: r.note, ts: r.ts, hash: run.content_hash };
       const ids = Object.keys(cur); if (ids.length > 2000) for (const k of ids.slice(0, ids.length - 2000)) delete cur[k];
       await this.state.storage.put('evalreviews', cur);
       return json({ ok: true, id: r.id, verdict: r.verdict });

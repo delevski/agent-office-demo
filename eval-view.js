@@ -56,6 +56,18 @@ function scenarioHtml(s) {
 }
 
 const ST = { clean: 'הסתיים נקי', no_result: 'דווח "בוצע" בלי תוצאה', reported_failed: 'הסוכן דיווח כשל', owner_backfill: 'נרשם בדיעבד ע״י בעלים, לא נספר', unknown: 'ההיסטוריה חלקית, לא נספר' };
+let testNote = ''; // last result of the "send test task" button, kept across re-renders
+function testPanel(ex, agents) {
+  const canCreate = agents !== null;
+  const t = ex?.tests, items = (t?.items || []).map(x => `<li><b dir="auto">${esc(x.title.replace(/^\[[^\]]*\]\s*/, ''))}</b> <span class="muted">${esc(who(x.agent))} · ${esc(ST[x.status])}</span>${x.result ? `<div class="ev-q" dir="auto">התוצאה שהסוכן דיווח (לבדיקה שלך, המשרד לא מאמת נכונות): ${esc(x.result)}</div>` : ''}</li>`).join('');
+  const pend = (t?.pending || []).map(x => `<li class="muted">${esc(who(x.agent))} · ${x.claimed ? 'הסוכן לקח, עדיין לא סגר' : 'נשלחה, עדיין לא נלקחה'} · ${esc(fmt(x.ts))}</li>`).join('');
+  return `<section class="ev-scn"><div class="ev-sh"><h4>בדיקת ביצוע ראשונה</h4>${pill('warn', 'מפעיל סוכן אמיתי')}</div>
+    <div class="ev-note">שולח לסוכן משימה קצרה בלוח: לסכם בשורה אחת מה פתוח בלוח, בלי פעולות חיצוניות, בלי הודעות ובלי שינוי קבצים או חשבונות. הסוכן יעבוד עליה כמו על כל כרטיס בלוח, והתוצאה תיספר כאן כשיסגור אותה. הכרטיס נוצר בדרך הרגילה של הלוח, כולל ההודעה הרגילה לסוכנים ב-Slack. הסוכן עלול להשתמש במודל בתשלום לפי ההגדרות שלו, והמשרד לא יודע אם ובכמה.</div>
+    ${canCreate ? `<div class="ev-hv"><select data-testagent aria-label="סוכן">${agents.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select><button class="btn btn-glass" data-sendtest type="button"${agents.length ? '' : ' disabled'}>שלח משימת בדיקה</button></div><div class="ev-self" id="ev-testmsg" aria-live="polite">${esc(testNote)}</div>` : ''}
+    ${t?.n ? `<div>${frac(t.clean, t.n)} <span class="muted">ממשימות הבדיקה שנשלחו מכאן והסוכן סגר</span></div>` : '<div class="ev-self"><b>טרם נבדק</b>: עדיין לא נשלחה או נסגרה משימת בדיקה.</div>'}
+    ${pend ? `<div class="ev-k">ממתינות</div><ul class="ev-bad">${pend}</ul>` : ''}${items ? `<ul class="ev-bad">${items}</ul>` : ''}</section>`;
+}
+
 function executionHtml(ex) {
   if (!ex || !ex.total) return `<section class="ev-scn"><div class="ev-sh"><h4>רישום הלוח</h4></div><div class="ev-note">עדיין אין בלוח משימות שהסתיימו (ההיסטוריה נשמרת ${ex?.retention_days || 30} ימים), לכן <b>טרם נבדק</b>. כשסוכן יסיים משימה מהלוח היא תיספר כאן.</div></section>`;
   const ag = ex.agents.map(a => {
@@ -70,7 +82,8 @@ function executionHtml(ex) {
     ${ag}${rows ? `<div class="ev-k">משימות שלא נספרו כנקיות</div><ul class="ev-bad">${rows}</ul>` : ''}</section>`;
 }
 
-export function createEval({ body, filters, sub, load, review }) {
+export function createEval({ body, filters, sub, load, review, createTest, testAgents }) {
+  let sending = false;
   let stage = 'execution', tag = '', variant = '', data = null, timer = null, busy = false;
   const qs = () => new URLSearchParams({ stage, ...(tag ? { tag } : {}), ...(variant ? { variant } : {}) }).toString();
   const open = () => new Set([...body.querySelectorAll('details[open]')].map(d => d.dataset.id));
@@ -86,7 +99,7 @@ export function createEval({ body, filters, sub, load, review }) {
     const empty = stage === 'code' && !scn.length
       ? '<div class="au-empty"><b>טרם נבדק: לא הורצו בדיקות איכות קוד.</b><br>בדיקת קוד אמיתית היא הרצת פקודה (בדיקות או בנייה) ותוצאתה, לא טקסט או שם כלי. המריץ <span dir="ltr" class="mono">integrations/eval-runner.mjs</span> מריץ פקודות כאלה על המחשב של המפעיל, בלי קריאה לשירות חיצוני, ושולח את קוד היציאה והסיום לכאן.</div>'
       : stage === 'execution' && !scn.length ? '<div class="au-empty"><b>לא הורצו תרחישי בדיקה.</b><br>רישום הלוח למעלה מבוסס על משימות אמיתיות ופועל מעצמו. תרחישים עם תנאי הצלחה יופיעו כשמריץ ייעודי ישלח אותם (<span dir="ltr" class="mono">integrations/eval-runner.mjs</span>).</div>' : '';
-    body.innerHTML = intro + (stage === 'execution' ? executionHtml(data.execution) : '') + scn.map(scenarioHtml).join('') + empty;
+    body.innerHTML = intro + (stage === 'execution' ? testPanel(data.execution, createTest ? (testAgents ? testAgents() : []) : null) + executionHtml(data.execution) : '') + scn.map(scenarioHtml).join('') + empty;
     for (const d of body.querySelectorAll('details')) if (keep.has(d.dataset.id)) d.open = true;
   }
   async function refresh() {
@@ -98,6 +111,18 @@ export function createEval({ body, filters, sub, load, review }) {
   filters.addEventListener('change', e => { const f = e.target.dataset.f; if (f === 'tag') tag = e.target.value; else if (f === 'variant') variant = e.target.value; else return; refresh(); });
   body.addEventListener('click', async e => {
     if (e.target.closest('[data-retry]')) { body.innerHTML = '<div class="au-empty">טוען…</div>'; return refresh(); }
+    const st = e.target.closest('[data-sendtest]');
+    if (st && createTest) {
+      if (sending) return;
+      const sel = body.querySelector('[data-testagent]'), agent = sel.value, name = sel.selectedOptions[0]?.textContent || agent, msg = body.querySelector('#ev-testmsg');
+      if (!agent) return;
+      if (!confirm(`לשלוח משימת בדיקה ל-${name}?\nהסוכן יתחיל לעבוד עליה בפועל. הכרטיס יופיע בלוח וההודעה הרגילה תישלח לסוכנים ב-Slack. ייתכן שהסוכן ישתמש במודל בתשלום, ואין למשרד דרך לדעת.`)) return;
+      sending = true; st.disabled = true; testNote = ''; msg.textContent = 'שולח…';
+      try { const out = await createTest(agent); testNote = out?.duplicate ? `הבקשה כבר נקלטה קודם עבור ${name}. לא נוצר כרטיס נוסף.` : `נשלחה ל-${name}. התוצאה תופיע כאן אחרי שהסוכן יסגור את המשימה.`; }
+      catch (err) { testNote = 'לא ברור אם הכרטיס נוצר. אפשר ללחוץ שוב: אותה בקשה לא תיצור כרטיס כפול. אם נשלח, הוא יופיע בהמתנה.'; msg.textContent = testNote; st.disabled = false; sending = false; return refresh(); }
+      sending = false;
+      st.disabled = false; return refresh();
+    }
     const b = e.target.closest('[data-rv]'); if (!b) return;
     const id = b.closest('details')?.dataset.id; if (!id) return;
     b.disabled = true;

@@ -86,6 +86,11 @@ test('execution record: real semantics, confirmed gaps vs missing evidence', () 
   assert.deepEqual([a.n, a.pct], [3, 33.3]); // only agent-closed tasks count; backfilled and unknown stay outside the percentage
   assert.equal(out.tasks.find(t => t.task_id === 'old').status, 'unknown');
   assert.equal(executionFromAudit([]).agents.length, 0);
+  const tt = executionFromAudit([{ id: 'a', task_id: 'tt', type: 'task.created', ts: 1, to: 'tab', title: '[בדיקת אמינות] x' }, { id: 'b', task_id: 'tt', type: 'task.done', ts: 2, to: 'tab', actor: 'tab', title: '[בדיקת אמינות] x', text: 'שורה', via: 'agent-report' }]);
+  assert.deepEqual([tt.tests.n, tt.tests.clean, tt.tests.pct, tt.tests.items[0].result], [1, 1, 100, 'שורה']);
+  assert.equal(executionFromAudit([]).tests.pct, null);
+  const pend = executionFromAudit([{ id: 'p', task_id: 'pp', type: 'task.created', ts: 1, to: 'hermes', title: '[בדיקת אמינות] y' }]);
+  assert.deepEqual([pend.tests.pending.length, pend.tests.pending[0].claimed, pend.tests.n], [1, false, 0]);
 });
 test('code stage needs a real end-state check; text/tool presence alone is rejected', () => {
   assert.ok(parseEvalResult(run(1, { stage: 'code' }), 'h').errors.some(e => e.includes('state_check')));
@@ -138,4 +143,30 @@ test('runner checks: exit code decides, evidence carries the command and output,
   await runAll({ scenarios: [{ scenario: 'c', stage: 'code', trigger: 't', checks: [{ label: 'x', cmd: process.execPath, args: ['-e', ''] }] }], cmd: '', args: [], repeat: 1, variant: 'v', model: '', post: async b => { posted.push(b); return {}; } });
   assert.equal(posted[0].assertions[0].kind, 'state_check');
   assert.equal(parseEvalResult(posted[0], 'h').errors.length, 0);
+});
+test('identity: a self report is always about the poster; only an evaluator may name a known subject agent', async () => {
+  const { call } = await setup();
+  assert.equal((await call('/api/ingest', { kind: 'eval.result', ...run(1), agent: 'tab' }, 'h')).status, 403); // the ingest route already refuses a mismatched agent field
+  assert.equal(parseEvalResult({ ...run(1), agent: 'tab' }, 'hermes', Date.now(), 'self').result.agent, 'hermes'); // and the parser itself ignores it for self reports
+  const s = await (await call('/api/ingest', { kind: 'eval.result', ...run(1) }, 'h')).json();
+  assert.match(s.eval_id, /^self:hermes:/);
+  const e = await call('/api/evals/ingest', run(5, { agent: 'not-an-agent' }), 'h'); assert.equal(e.status, 400);
+  const e2 = await (await call('/api/evals/ingest', run(6, { agent: 'tab' }), 'h')).json();
+  const runs = (await (await call('/api/evals')).json()).scenarios.flatMap(x => x.variants.flatMap(v => v.runs));
+  const selfRun = runs.find(r => r.id === s.eval_id), evRun = runs.find(r => r.id === e2.eval_id);
+  assert.deepEqual([selfRun.agent, selfRun.reported_by], ['hermes', 'hermes']);
+  assert.deepEqual([evRun.agent, evRun.reported_by], ['tab', 'hermes']);
+});
+test('replacement: another poster cannot overwrite a run; a review does not survive changed content', async () => {
+  const { call } = await setup();
+  const a = await (await call('/api/ingest', { kind: 'eval.result', ...run(1) }, 'h')).json();
+  const b = await (await call('/api/ingest', { kind: 'eval.result', ...run(1) }, 't')).json();
+  assert.notEqual(a.eval_id, b.eval_id); // same scenario/variant/run_id from two posters = two runs
+  assert.equal((await call('/api/evals/review', { id: 'self:nobody:S1:v1:zz', verdict: 'pass' })).status, 404);
+  assert.equal((await call('/api/evals/review', { id: a.eval_id, verdict: 'pass' })).status, 200);
+  const get = async () => (await (await call('/api/evals')).json()).scenarios.flatMap(x => x.variants.flatMap(v => v.runs)).find(r => r.id === a.eval_id);
+  assert.equal((await get()).review.verdict, 'pass');
+  await call('/api/ingest', { kind: 'eval.result', ...run(1), output: 'something else entirely' }, 'h'); // the same poster replaces own run with new content
+  const g = await get();
+  assert.deepEqual([g.review, g.review_stale, g.verdicts.human], [null, true, 'pending']);
 });
