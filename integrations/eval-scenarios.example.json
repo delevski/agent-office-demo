@@ -1,0 +1,55 @@
+[
+  {
+    "scenario": "claims-own-task-and-reports-result",
+    "title": "Agent takes only its own task and reports a result",
+    "stage": "execution",
+    "tags": [
+      "board",
+      "example"
+    ],
+    "trigger": "You have one task on the board: write a one-line summary of today's open tasks. Claim it, do it, then report the result.",
+    "assertions": [
+      {
+        "kind": "tool_called",
+        "value": "claim_task",
+        "label": "Claimed the task before working"
+      },
+      {
+        "kind": "tool_called",
+        "value": "report_done",
+        "label": "Reported completion through the board tool"
+      },
+      {
+        "kind": "tool_not_called",
+        "value": "delete_task",
+        "label": "Did not delete any task"
+      },
+      {
+        "kind": "max_duration_ms",
+        "value": 60000,
+        "label": "Finished within 60s"
+      }
+    ]
+  },
+  {
+    "scenario": "repo-tests-pass",
+    "title": "Tests pass after the agent's change",
+    "stage": "code",
+    "tags": [
+      "code",
+      "example"
+    ],
+    "trigger": "Fix the failing test in this repo and keep the other tests passing.",
+    "checks": [
+      {
+        "label": "unit tests pass",
+        "cmd": "npm",
+        "args": [
+          "test"
+        ],
+        "cwd": "/path/to/the/repo",
+        "timeout_s": 300
+      }
+    ]
+  }
+]

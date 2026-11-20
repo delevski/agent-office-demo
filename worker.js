@@ -10,6 +10,8 @@
 //   GET  /api/events?since=N         (session) polling fallback / catch-up
 //   GET  /api/reviews[?author=id]    (session) code reviews (kind "review")
 //   GET  /api/changes[?day=YYYY-MM-DD] (session) what changed today: merged PRs, deploys, closed tasks
+//   POST /api/ingest {kind:"eval.result"} (agent token) a SELF-reported eval run; POST /api/evals/ingest (EVAL_EVALUATORS agents only) an evaluator run
+//   GET  /api/evals[?tag=&variant=&agent=] (session) agent evals; POST /api/evals/review (session) the owner's human verdict
 //   GET  /api/audit[?day=&agent=&type=&pr=&repo=] (session only; agent tokens get 403) the "בקרה" control log: PR lifecycle,
 //                                          agent-to-agent messages, board tasks and tickets, grouped into one timeline
 //   POST /api/inbox {to,title,note?,link?}  (per-agent token) an agent opens a ticket for ANOTHER agent (from = the token's agent)
@@ -33,6 +35,7 @@ import {
 export { EventHub } from './server/hub.js';
 import { parseBoardTask, parseTicket } from './server/board.js';
 import { parseAuditKind, auditKind } from './audit-state.js';
+import { parseEvalResult, parseReview } from './eval-state.js';
 import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
 
@@ -64,6 +67,26 @@ async function readJson(request) {
   return JSON.parse(text || '{}');
 }
 
+/** Agents the OWNER designated as evaluators (env EVAL_EVALUATORS, comma list). Only their runs feed the headline counts. */
+function evaluatorAgents(env) {
+  const known = tokenAgents(env);
+  return String(env.EVAL_EVALUATORS || '').split(',').map(s => agentId(s)).filter(a => a && known.includes(a));
+}
+
+// eval.result: one run of a scenario. /api/ingest (any agent token) = "self" report; /api/evals/ingest (evaluator agents only) = "evaluator".
+async function ingestEval(request, env, asEvaluator) {
+  const who = writerFor(request, env);
+  if (!who.ok) return json({ ok: false, error: 'unauthorized' }, 401);
+  if (!who.agent) return json({ ok: false, error: 'per-agent token required' }, 403);
+  if (asEvaluator && !evaluatorAgents(env).includes(who.agent)) return json({ ok: false, error: 'not an evaluator agent' }, 403);
+  let body;
+  try { body = await readJson(request); } catch { return json({ ok: false, error: 'invalid json' }, 400); }
+  const parsed = parseEvalResult(body, who.agent, Date.now(), asEvaluator ? 'evaluator' : 'self');
+  if (parsed.errors.length) return json({ ok: false, error: 'invalid eval.result', details: parsed.errors }, 400);
+  const res = await hub(env).fetch('https://hub/eval/add', { method: 'POST', body: JSON.stringify({ results: [parsed.result] }) });
+  return json({ ok: res.ok, kind: 'eval.result', eval_id: parsed.result.id, source: parsed.result.source, reported_by: who.agent }, res.status);
+}
+
 async function ingest(request, env, forcedAgent = null) {
   const who = writerFor(request, env);
   if (!who.ok) return json({ ok: false, error: 'unauthorized' }, 401);
@@ -74,6 +97,9 @@ async function ingest(request, env, forcedAgent = null) {
   if (who.agent) {
     if (body.agent && agentId(body.agent) !== who.agent) return json({ ok: false, error: 'token does not match agent' }, 403);
     body.agent = who.agent;
+  }
+  if (!forcedAgent && ['eval.result', 'eval'].includes(String(body.kind ?? body.type ?? ''))) {
+    return ingestEval(new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(body) }), env, false);
   }
   // Audit-only kinds (pr.approved, message): validated and written to the control log; they never move an agent's live state.
   if (auditKind(body)) {
@@ -107,6 +133,7 @@ export default {
 
     /* ---- writes from agents ---- */
     if (path === '/api/ingest' && request.method === 'POST') return ingest(request, env);
+    if (path === '/api/evals/ingest' && request.method === 'POST') return ingestEval(request, env, true);
     const hb = /^\/api\/agents\/([^/]+)\/heartbeat$/.exec(path);
     if (hb && request.method === 'POST') return ingest(request, env, agentId(decodeURIComponent(hb[1])));
 
@@ -274,6 +301,19 @@ export default {
       return privateJson({ ok: false, error: 'method not allowed' }, 405);
     }
 
+    /* ---- evals: the owner's human verdict on a run ---- */
+    if (path === '/api/evals/review' && request.method === 'POST') {
+      if (!(await isLoggedIn(request, env))) return privateJson({ ok: false, error: 'login required' }, 401);
+      const origin = request.headers.get('Origin');
+      if (origin && origin !== url.origin) return privateJson({ ok: false, error: 'bad origin' }, 403);
+      let body;
+      try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
+      const parsed = parseReview(body);
+      if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid review', details: parsed.errors }, 400);
+      const res = await hub(env).fetch('https://hub/eval/review', { method: 'POST', body: JSON.stringify(parsed) });
+      return privateJson(await res.json(), res.status);
+    }
+
     /* ---- private reads: Ori only ---- */
     if (path === '/api/audit' && !(await isLoggedIn(request, env))) {
       return privateJson({ ok: false, error: writerFor(request, env).ok ? 'owner only' : 'login required' }, writerFor(request, env).ok ? 403 : 401);
@@ -287,7 +327,7 @@ export default {
         const res = await hub(env).fetch(`https://hub/agents?known=${known}&id=${encodeURIComponent(one)}`);
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
-      if (path === '/api/reviews' || path === '/api/audit' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
+      if (path === '/api/reviews' || path === '/api/audit' || path === '/api/evals' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
         const res = await hub(env).fetch('https://hub' + path.slice(4) + (url.search || ''));
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }

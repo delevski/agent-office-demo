@@ -2,12 +2,14 @@
 // Storage keys:  events, seq (feed, unchanged)  ·  agent:<id> (per-agent live state)
 //                reviews (code reviews, newest last)  ·  changes (merged PRs, deploys, closed tasks)
 //                audit:<day> (the "בקרה" log: PR lifecycle, agent messages, board tasks; one key per day, 30 days)
+//                eval:<day> (agent eval runs, one key per day, 30 days)  ·  evalreviews (owner's human verdicts by run id)
 //                ticketrate:<agent> (agent-to-agent ticket rate limit)
 //                fail:<ip> (login throttle)
 import { applyReport, feedNote, isFeedEvent, publicView, emptyAgent, newlyDone, dayOf } from './agents.js';
 import { changesForDay, buildSummary, overnightSince, dayBounds } from '../insights.js';
 
 import { boardView, boardReport, BOARD_LIMIT, TICKET_PER_HOUR, TICKET_OPEN_MAX, TICKET_DEPTH_MAX, TERMINAL } from './board.js';
+import { mergeEvalDay, buildEvals, executionFromAudit, EVAL_DAYS } from '../eval-state.js';
 import { auditFromReport, auditFromTask, buildAudit, mergeDay, AUDIT_DAYS } from '../audit-state.js';
 
 const FEED_MAX = 200;
@@ -134,9 +136,50 @@ export class EventHub {
     }
   }
 
+  async addEval(results) {
+    const list = (results || []).filter(e => e && e.id && e.type === 'eval.result' && Number.isFinite(e.ts));
+    if (!list.length) return;
+    const byDay = new Map();
+    for (const e of list) { const d = dayOf(e.ts); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(e); }
+    const writes = {}; let newDay = false;
+    for (const [d, evs] of byDay) {
+      const cur = await this.state.storage.get('eval:' + d);
+      if (!cur) newDay = true;
+      writes['eval:' + d] = mergeEvalDay(cur || [], evs);
+    }
+    await this.state.storage.put(writes);
+    if (newDay) {
+      const keys = [...(await this.state.storage.list({ prefix: 'eval:' })).keys()].sort();
+      if (keys.length > EVAL_DAYS) await this.state.storage.delete(keys.slice(0, keys.length - EVAL_DAYS));
+    }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const now = Date.now();
+
+    if (url.pathname === '/eval/add' && request.method === 'POST') {
+      const body = await request.json();
+      await this.addEval(body.results);
+      return json({ ok: true, ids: (body.results || []).map(e => e.id) });
+    }
+    if (url.pathname === '/eval/review' && request.method === 'POST') {
+      const r = await request.json();
+      const cur = (await this.state.storage.get('evalreviews')) || {};
+      if (r.verdict === 'clear') delete cur[r.id]; else cur[r.id] = { verdict: r.verdict, note: r.note, ts: r.ts };
+      const ids = Object.keys(cur); if (ids.length > 2000) for (const k of ids.slice(0, ids.length - 2000)) delete cur[k];
+      await this.state.storage.put('evalreviews', cur);
+      return json({ ok: true, id: r.id, verdict: r.verdict });
+    }
+    if (url.pathname === '/evals') {
+      const all = [];
+      for (const v of (await this.state.storage.list({ prefix: 'eval:' })).values()) all.push(...v);
+      const reviews = (await this.state.storage.get('evalreviews')) || {};
+      const q = Object.fromEntries(['stage', 'tag', 'variant', 'agent'].map(k => [k, url.searchParams.get(k) || '']));
+      const audit = [];
+      for (const v of (await this.state.storage.list({ prefix: 'audit:' })).values()) audit.push(...v);
+      return json({ ...buildEvals(all, reviews, q, now), execution: executionFromAudit(audit) });
+    }
 
     if (url.pathname === '/audit/add' && request.method === 'POST') {
       const body = await request.json();
