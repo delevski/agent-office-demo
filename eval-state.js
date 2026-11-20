@@ -17,7 +17,7 @@
 // Only a count of runs (k of n) is shown; no confidence label, threshold or composite score. Nothing is seeded.
 import { str, agentId } from './office-state.js';
 
-export const DET_KINDS = ['tool_called', 'tool_not_called', 'output_contains', 'output_not_contains', 'max_duration_ms', 'state_check'];
+export const DET_KINDS = ['tool_called', 'tool_not_called', 'output_contains', 'output_equals', 'output_not_contains', 'max_duration_ms', 'state_check'];
 export const EVAL_KINDS = [...DET_KINDS, 'judge'];
 export const STAGES = ['execution', 'code'];   // 1) did the agent carry out the task correctly  2) quality of the code it produced
 export const EVAL_DAYS = 30;
@@ -37,6 +37,7 @@ export function checkAssertion(spec, ev) {
     case 'tool_called': return { passed: tools.includes(spec.value), evidence: tools.includes(spec.value) ? `הכלי ${spec.value} נקרא` : `הכלי ${spec.value} לא נקרא (נקראו: ${tools.join(', ') || 'אף כלי'})` };
     case 'tool_not_called': return { passed: !tools.includes(spec.value), evidence: tools.includes(spec.value) ? `הכלי ${spec.value} נקרא למרות האיסור` : `הכלי ${spec.value} לא נקרא` };
     case 'output_contains': return { passed: out.toLowerCase().includes(spec.value.toLowerCase()), evidence: `חיפוש "${spec.value}" בפלט` };
+    case 'output_equals': { const norm = x => String(x).replace(/\s+/g, ' ').trim(); return { passed: norm(out) === norm(spec.value), evidence: `השוואה מדויקת (אחרי איחוד רווחים) של כל הפלט מול "${norm(spec.value)}"` }; }
     case 'output_not_contains': return { passed: !out.toLowerCase().includes(spec.value.toLowerCase()), evidence: `בדיקה ש-"${spec.value}" לא מופיע בפלט` };
     case 'max_duration_ms': {
       const d = nonNeg(ev.duration_ms), lim = nonNeg(spec.value);

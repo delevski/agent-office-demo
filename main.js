@@ -961,15 +961,15 @@ async function openEval() {
       const [, mod] = await evalLoading;
       evalApi ||= mod.createEval({ body: $('#eval-ov-body'), filters: $('#eval-ov-filters'), sub: $('#eval-ov-sub'),
         load: qs => apiGet('./api/evals' + (qs ? '?' + qs : '')),
-        testAgents: () => LIVE.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => ({ id: a.id, name: a.name })), // same recipients as the "give a task" form
+        testAgents: () => LIVE.filter(a => a.id === 'hermes').map(a => { const v = liveState.get(a.id); return { id: a.id, name: a.name, online: !!(v && v.hasData && v.status !== 'offline') }; }), // the card text addresses Hermes by name, so only Hermes is offered
         createTest: async agent => {
           // One requestId per pending attempt, kept in sessionStorage: a retry or a reload after an unknown outcome reuses it, and the board dedupes by requestId.
           const key = 'evtest:' + agent;
           let requestId = ''; try { requestId = sessionStorage.getItem(key) || ''; } catch { /* private mode */ }
           if (!requestId) { requestId = crypto.randomUUID(); try { sessionStorage.setItem(key, requestId); } catch { /* ignore */ } }
           const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId, agent,
-            title: '[בדיקת אמינות] סכם בשורה אחת מה פתוח בלוח',
-            note: 'משימת בדיקה מהפאנל בדיקות אמינות. החזר שורה אחת בלבד שמסכמת אילו משימות פתוחות יש בלוח, ודווח אותה כתוצאה. אל תבצע פעולות חיצוניות, אל תשלח הודעות ואל תשנה קבצים או חשבונות.' }) });
+            title: '[בדיקת אמינות] בדיקת אמינות להרמס', // identical to integrations/eval-board-task.mjs (a test pins it)
+            note: 'בדיקת אמינות להרמס: נתוני דמה A=12, B=7, C=30, D=5, E=18. חשב את הסכום והכמות של הערכים שגדולים מ־10. החזר: סכום: X; כמות: Y; מזהה כרטיס: ID. מותר לקחת, לעדכן ולסגור רק את כרטיס הבדיקה. אין לבצע פעולות נוספות.' }) });
           const d = await r.json().catch(() => ({}));
           if (r.status === 401) { onLoggedOut(true); throw new Error('login'); }
           if (!r.ok || !d.ok) throw new Error('task ' + r.status);
