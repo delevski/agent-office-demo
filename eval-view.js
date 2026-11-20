@@ -57,13 +57,13 @@ function scenarioHtml(s) {
 
 const ST = { clean: 'הסתיים נקי', no_result: 'דווח "בוצע" בלי תוצאה', reported_failed: 'הסוכן דיווח כשל', owner_backfill: 'נרשם בדיעבד ע״י בעלים, לא נספר', unknown: 'ההיסטוריה חלקית, לא נספר' };
 let testNote = ''; // last result of the "send test task" button, kept across re-renders
-function testPanel(ex, agents) {
+function testPanel(ex, agents, enabled) {
   const canCreate = agents !== null;
   const t = ex?.tests, items = (t?.items || []).map(x => `<li><b dir="auto">${esc(x.title.replace(/^\[[^\]]*\]\s*/, ''))}</b> <span class="muted">${esc(who(x.agent))} · ${esc(ST[x.status])}</span>${x.result ? `<div class="ev-q" dir="auto">התוצאה שהסוכן דיווח (לבדיקה שלך, המשרד לא מאמת נכונות): ${esc(x.result)}</div>` : ''}</li>`).join('');
   const pend = (t?.pending || []).map(x => `<li class="muted">${esc(who(x.agent))} · ${x.claimed ? 'הסוכן לקח, עדיין לא סגר' : 'נשלחה, עדיין לא נלקחה'} · ${esc(fmt(x.ts))}</li>`).join('');
   return `<section class="ev-scn"><div class="ev-sh"><h4>בדיקת ביצוע ראשונה</h4>${pill('warn', 'מפעיל סוכן אמיתי')}</div>
     <div class="ev-note">שולח לסוכן משימה קצרה בלוח: לסכם בשורה אחת מה פתוח בלוח, בלי פעולות חיצוניות, בלי הודעות ובלי שינוי קבצים או חשבונות. הסוכן יעבוד עליה כמו על כל כרטיס בלוח, והתוצאה תיספר כאן כשיסגור אותה. הכרטיס נוצר בדרך הרגילה של הלוח, כולל ההודעה הרגילה לסוכנים ב-Slack. הסוכן עלול להשתמש במודל בתשלום לפי ההגדרות שלו, והמשרד לא יודע אם ובכמה.</div>
-    ${canCreate ? `<div class="ev-hv"><select data-testagent aria-label="סוכן">${agents.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select><button class="btn btn-glass" data-sendtest type="button"${agents.length ? '' : ' disabled'}>שלח משימת בדיקה</button></div><div class="ev-self" id="ev-testmsg" aria-live="polite">${esc(testNote)}</div>` : ''}
+    ${canCreate ? `<div class="ev-hv"><select data-testagent aria-label="סוכן">${agents.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select><button class="btn btn-glass" data-sendtest type="button"${agents.length && enabled ? '' : ' disabled'}>שלח משימת בדיקה</button></div>${enabled ? '' : '<div class="ev-self"><b>השליחה כבויה.</b> היא תופעל רק אחרי שבעל המשרד יאשר אותה בהגדרות השרת (EVAL_TEST_DISPATCH), כי הסוכן עלול להשתמש במודל בתשלום וההודעה הרגילה נשלחת ל-Slack.</div>'}<div class="ev-self" id="ev-testmsg" aria-live="polite">${esc(testNote)}</div>` : ''}
     ${t?.n ? `<div>${frac(t.clean, t.n)} <span class="muted">ממשימות הבדיקה שנשלחו מכאן והסוכן סגר</span></div>` : '<div class="ev-self"><b>טרם נבדק</b>: עדיין לא נשלחה או נסגרה משימת בדיקה.</div>'}
     ${pend ? `<div class="ev-k">ממתינות</div><ul class="ev-bad">${pend}</ul>` : ''}${items ? `<ul class="ev-bad">${items}</ul>` : ''}</section>`;
 }
@@ -99,7 +99,7 @@ export function createEval({ body, filters, sub, load, review, createTest, testA
     const empty = stage === 'code' && !scn.length
       ? '<div class="au-empty"><b>טרם נבדק: לא הורצו בדיקות איכות קוד.</b><br>בדיקת קוד אמיתית היא הרצת פקודה (בדיקות או בנייה) ותוצאתה, לא טקסט או שם כלי. המריץ <span dir="ltr" class="mono">integrations/eval-runner.mjs</span> מריץ פקודות כאלה על המחשב של המפעיל, בלי קריאה לשירות חיצוני, ושולח את קוד היציאה והסיום לכאן.</div>'
       : stage === 'execution' && !scn.length ? '<div class="au-empty"><b>לא הורצו תרחישי בדיקה.</b><br>רישום הלוח למעלה מבוסס על משימות אמיתיות ופועל מעצמו. תרחישים עם תנאי הצלחה יופיעו כשמריץ ייעודי ישלח אותם (<span dir="ltr" class="mono">integrations/eval-runner.mjs</span>).</div>' : '';
-    body.innerHTML = intro + (stage === 'execution' ? testPanel(data.execution, createTest ? (testAgents ? testAgents() : []) : null) + executionHtml(data.execution) : '') + scn.map(scenarioHtml).join('') + empty;
+    body.innerHTML = intro + (stage === 'execution' ? testPanel(data.execution, createTest ? (testAgents ? testAgents() : []) : null, !!data.dispatch_enabled) + executionHtml(data.execution) : '') + scn.map(scenarioHtml).join('') + empty;
     for (const d of body.querySelectorAll('details')) if (keep.has(d.dataset.id)) d.open = true;
   }
   async function refresh() {

@@ -170,3 +170,13 @@ test('replacement: another poster cannot overwrite a run; a review does not surv
   const g = await get();
   assert.deepEqual([g.review, g.review_stale, g.verdicts.human], [null, true, 'pending']);
 });
+test('test dispatch is gated: refused and reported disabled unless the owner enables it', async () => {
+  const off = await setup();
+  const body = { requestId: 'a'.repeat(20), agent: 'tab', title: '[בדיקת אמינות] x', note: '' };
+  assert.equal((await off.call('/api/tasks', body)).status, 403);
+  assert.equal((await (await off.call('/api/evals')).json()).dispatch_enabled, false);
+  assert.equal((await off.call('/api/tasks', { ...body, title: 'normal task' })).status, 200); // ordinary board cards are untouched
+  const on = await setup({ EVAL_TEST_DISPATCH: 'enabled' });
+  assert.equal((await on.call('/api/tasks', body)).status, 200);
+  assert.equal((await (await on.call('/api/evals')).json()).dispatch_enabled, true);
+});

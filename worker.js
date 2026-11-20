@@ -35,7 +35,7 @@ import {
 export { EventHub } from './server/hub.js';
 import { parseBoardTask, parseTicket } from './server/board.js';
 import { parseAuditKind, auditKind } from './audit-state.js';
-import { parseEvalResult, parseReview } from './eval-state.js';
+import { parseEvalResult, parseReview, TEST_PREFIX } from './eval-state.js';
 import { uploadFile, serveFile, deleteFile, transcribe, resolveAttachments, filesConfigured, aiConfigured } from './server/files.js';
 import { notifyAgents } from './server/notify.js';
 
@@ -56,6 +56,9 @@ function privateJson(obj, status = 200, headers = {}) {
     status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },
   });
 }
+
+/** Owner opt-in for the reliability panel's "send a test task" button. Unset = the button is shown disabled and the server refuses. */
+const testDispatchEnabled = env => env.EVAL_TEST_DISPATCH === 'enabled';
 
 function hub(env) {
   return env.HUB.get(env.HUB.idFromName('global'));
@@ -210,6 +213,8 @@ export default {
       try { body = await readJson(request); } catch { return privateJson({ ok: false, error: 'invalid json' }, 400); }
       const parsed = parseBoardTask(body, tokenAgents(env));
       if (parsed.errors.length) return privateJson({ ok: false, error: 'invalid task', details: parsed.errors }, 400);
+      // Reliability test cards dispatch real agent work (and possibly paid model use): off unless the owner turns it on with EVAL_TEST_DISPATCH=enabled.
+      if (parsed.title.startsWith(TEST_PREFIX) && !testDispatchEnabled(env)) return privateJson({ ok: false, error: 'test dispatch is not enabled' }, 403);
       const att = await resolveAttachments(env, parsed.attachments, url.origin);
       if (!att.ok) return privateJson({ ok: false, error: 'invalid task', details: [att.error] }, att.error === 'uploads not configured' ? 501 : 400);
       parsed.attachments = att.list;
@@ -329,6 +334,7 @@ export default {
       }
       if (path === '/api/reviews' || path === '/api/audit' || path === '/api/evals' || path === '/api/changes' || path === '/api/replay' || path === '/api/handoffs') {
         const res = await hub(env).fetch('https://hub' + path.slice(4) + (url.search || ''));
+        if (path === '/api/evals' && res.ok) { const d = await res.json(); return new Response(JSON.stringify({ ...d, dispatch_enabled: testDispatchEnabled(env) }), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }); }
         return new Response(res.body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
       }
       if (path === '/api/events') {
