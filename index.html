@@ -70,6 +70,7 @@
         <button class="btn btn-glass qk-sm" id="btn-shelves" type="button" aria-label="מדף סקילים" title="מדף סקילים"><svg class="ico" aria-hidden="true"><use href="#i-library"/></svg><span class="lbl">מדף סקילים</span></button>
         <button class="btn btn-glass live-only qk-sm" id="btn-reviews" type="button" aria-label="ביקורות" title="ביקורות"><svg class="ico" aria-hidden="true"><use href="#i-scan-eye"/></svg><span class="lbl">ביקורות</span></button>
         <button class="btn btn-glass live-only qk-sm" id="btn-audit" type="button" aria-label="בקרה" title="בקרה"><svg class="ico" aria-hidden="true"><use href="#i-shield-check"/></svg><span class="lbl">בקרה</span></button>
+        <button class="btn btn-glass live-only qk-sm" id="btn-eval" type="button" aria-label="בדיקות אמינות" title="בדיקות אמינות"><svg class="ico" aria-hidden="true"><use href="#i-circle-check"/></svg><span class="lbl">בדיקות אמינות</span></button>
         <button class="btn btn-glass live-only qk-sm" id="btn-replay" type="button" aria-label="שחזור יום" title="שחזור יום"><svg class="ico" aria-hidden="true"><use href="#i-history"/></svg><span class="lbl">שחזור יום</span></button>
       </div>
       <aside class="cpanel" id="cpanel" aria-label="לוח משימות">
@@ -216,6 +217,18 @@
   </div>
 </div>
 
+<!-- בדיקות אמינות: owner-only agent evals (lazy-loaded: eval-view.js + eval.css on first open). Task execution first, code quality second. -->
+<div id="eval-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="eval-ov-title">
+  <div class="ov-card card">
+    <div class="ov-head">
+      <div><h3 id="eval-ov-title"><svg class="ico" aria-hidden="true"><use href="#i-circle-check"/></svg> בדיקות אמינות</h3><div class="muted" id="eval-ov-sub"></div></div>
+      <button class="btn btn-ghost ov-close" type="button" data-close="#eval-ov" aria-label="סגירה"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="au-filters" id="eval-ov-filters"></div>
+    <div id="eval-ov-body" aria-live="polite"></div>
+  </div>
+</div>
+
 <!-- Morning summary (live mode): the same digest GET /api/summary returns, ready to paste -->
 <div id="summary-ov" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="summary-ov-title">
   <div class="ov-card card ov-narrow">
@@ -272,6 +285,6 @@
 
 
 
-<script type="module" src="./main.js?v=35"></script>
+<script type="module" src="./main.js?v=36"></script>
 </body>
 </html>

@@ -947,6 +947,40 @@ async function openAudit() {
   }
   auditApi.start();
 }
+// בדיקות אמינות (agent evals): same lazy loading as the control log.
+let evalApi = null, evalLoading = null;
+async function openEval() {
+  openOverlay('#eval-ov');
+  if (!evalApi) {
+    $('#eval-ov-body').innerHTML = '<div class="au-empty">טוען…</div>';
+    try {
+      evalLoading ||= Promise.all([
+        new Promise(res => { if (document.getElementById('eval-css')) return res(); const l = document.createElement('link'); l.id = 'eval-css'; l.rel = 'stylesheet'; l.href = './eval.css?v=1'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
+        import('./eval-view.js?v=1'),
+      ]);
+      const [, mod] = await evalLoading;
+      evalApi ||= mod.createEval({ body: $('#eval-ov-body'), filters: $('#eval-ov-filters'), sub: $('#eval-ov-sub'),
+        load: qs => apiGet('./api/evals' + (qs ? '?' + qs : '')),
+        testAgents: () => LIVE.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => ({ id: a.id, name: a.name })), // same recipients as the "give a task" form
+        createTest: async agent => {
+          // One requestId per pending attempt, kept in sessionStorage: a retry or a reload after an unknown outcome reuses it, and the board dedupes by requestId.
+          const key = 'evtest:' + agent;
+          let requestId = ''; try { requestId = sessionStorage.getItem(key) || ''; } catch { /* private mode */ }
+          if (!requestId) { requestId = crypto.randomUUID(); try { sessionStorage.setItem(key, requestId); } catch { /* ignore */ } }
+          const r = await fetch('./api/tasks', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId, agent,
+            title: '[בדיקת אמינות] סכם בשורה אחת מה פתוח בלוח',
+            note: 'משימת בדיקה מהפאנל בדיקות אמינות. החזר שורה אחת בלבד שמסכמת אילו משימות פתוחות יש בלוח, ודווח אותה כתוצאה. אל תבצע פעולות חיצוניות, אל תשלח הודעות ואל תשנה קבצים או חשבונות.' }) });
+          const d = await r.json().catch(() => ({}));
+          if (r.status === 401) { onLoggedOut(true); throw new Error('login'); }
+          if (!r.ok || !d.ok) throw new Error('task ' + r.status);
+          try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+          return { duplicate: !!d.duplicate };
+        },
+        review: async b => { const r = await fetch('./api/evals/review', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); if (!r.ok) throw new Error('review ' + r.status); } });
+    } catch (e) { evalLoading = null; console.warn(e); $('#eval-ov-body').innerHTML = '<div class="au-empty">לא הצלחתי לטעון את הבדיקות. נסה שוב.</div>'; return; }
+  }
+  evalApi.start();
+}
 function openReviews(focus = null) { reviewFocus = focus; renderReviewOverlay(); openOverlay('#review-ov'); }
 function renderReviewOverlay() {
   const trend = reviewTrend(reviews);
@@ -1519,7 +1553,7 @@ function openOverlay(id) {
   const el = $(id); el.classList.remove('hidden');
   setTimeout(() => el.querySelector('.ov-close')?.focus(), 30);
 }
-function closeOverlay(id) { $(id).classList.add('hidden'); if (id === '#audit-ov') auditApi?.stop(); lastFocus?.focus?.(); }
+function closeOverlay(id) { $(id).classList.add('hidden'); if (id === '#audit-ov') auditApi?.stop(); if (id === '#eval-ov') evalApi?.stop(); lastFocus?.focus?.(); }
 function openBoard() { renderBoardOverlay(); openOverlay('#board-ov'); }
 function openShelves() { renderShelfOverlay(); openOverlay('#shelf-ov'); }
 function renderBoardOverlay() {
@@ -1613,6 +1647,7 @@ $('#btn-board').addEventListener('click', () => openBoard());
 $('#btn-shelves').addEventListener('click', () => openShelves());
 $('#btn-reviews').addEventListener('click', () => openReviews(null));
 $('#btn-audit').addEventListener('click', openAudit);
+$('#btn-eval').addEventListener('click', openEval);
 document.addEventListener('keydown', e => { if (e.key === 'Tab') document.body.classList.add('kbd'); });
 document.addEventListener('pointerdown', () => document.body.classList.remove('kbd'));
 $('#cv').addEventListener('keydown', e => { // the room picture is focusable: + / - zoom, 0 resets
@@ -1636,9 +1671,10 @@ document.querySelectorAll('.navbtn').forEach(b =>
     if (btn.dataset.busy) return;
     btn.dataset.busy = '1';
     const ico = btn.querySelector('.ico');
-    const orig = ico.textContent;
+    // The icon is an inline <svg>: restore its markup, never its textContent (an svg has none, so the glyph was destroyed on the first tap).
+    const orig = ico.innerHTML;
     ico.innerHTML = '<span class="spin"></span>';
-    setTimeout(() => { ico.textContent = orig; delete btn.dataset.busy; switchView(btn.dataset.view); }, 180);
+    setTimeout(() => { ico.innerHTML = orig; delete btn.dataset.busy; switchView(btn.dataset.view); }, 180);
   }));
 
 if (window.innerWidth <= 900) switchView('view-scene');
