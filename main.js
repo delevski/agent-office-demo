@@ -1671,9 +1671,10 @@ document.querySelectorAll('.navbtn').forEach(b =>
     if (btn.dataset.busy) return;
     btn.dataset.busy = '1';
     const ico = btn.querySelector('.ico');
-    const orig = ico.textContent;
+    // The icon is an inline <svg>: restore its markup, never its textContent (an svg has none, so the glyph was destroyed on the first tap).
+    const orig = ico.innerHTML;
     ico.innerHTML = '<span class="spin"></span>';
-    setTimeout(() => { ico.textContent = orig; delete btn.dataset.busy; switchView(btn.dataset.view); }, 180);
+    setTimeout(() => { ico.innerHTML = orig; delete btn.dataset.busy; switchView(btn.dataset.view); }, 180);
   }));
 
 if (window.innerWidth <= 900) switchView('view-scene');

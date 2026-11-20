@@ -75,7 +75,7 @@ test('night/day logic is kept: same stops as the old room, working agents stay a
 });
 
 test('cache-busting: the changed modules carry new ?v= versions in the import chain', () => {
-  assert.match(html, /main\.js\?v=35/); assert.match(html, /concept\.css\?v=5/); assert.match(html, /styles\.css\?v=40/);
+  assert.match(html, /main\.js\?v=36/); assert.match(html, /concept\.css\?v=5/); assert.match(html, /styles\.css\?v=40/);
   assert.match(main, /concept\.js\?v=5/); assert.match(main, /room-core\.js\?v=1/); assert.match(main, /board-state\.js\?v=1/);
   assert.match(concept, /stage3d\.min\.js\?v=1/);
   assert.match(concept, /agent\.glb\?v=2/); assert.match(stage, /agent\.glb\?v=2/);
@@ -116,4 +116,13 @@ test('fallback, run for real with a stub DOM and no WebGL: one avatar per agent,
     stubs.document.hidden = true; await new Promise(r => setTimeout(r, 60)); // the frame loop stops itself
     for (const [k, d] of Object.entries(saved)) { if (d) Object.defineProperty(g, k, d); else delete g[k]; }
   }
+});
+
+test('bottom nav: the busy flash restores the icon markup, not textContent (an svg has no text)', () => {
+  const src = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const at = src.indexOf('if (btn.dataset.busy) return;'); assert.ok(at > 0);
+  const block = src.slice(at, at + 600);
+  assert.match(block, /const orig = ico\.innerHTML/);
+  assert.match(block, /ico\.innerHTML = orig/);
+  assert.doesNotMatch(block, /ico\.textContent/);
 });
