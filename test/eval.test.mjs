@@ -180,3 +180,56 @@ test('test dispatch is gated: refused and reported disabled unless the owner ena
   assert.equal((await on.call('/api/tasks', body)).status, 200);
   assert.equal((await (await on.call('/api/evals')).json()).dispatch_enabled, true);
 });
+test('output_equals: the whole output must match, extra or contradictory text fails', () => {
+  const r = (out) => checkAssertion({ kind: 'output_equals', value: 'סכום: 60; כמות: 3; מזהה כרטיס: x' }, { output: out }).passed;
+  assert.equal(r('סכום: 60; כמות: 3; מזהה כרטיס: x'), true);
+  assert.equal(r('  סכום: 60;\n כמות: 3;   מזהה כרטיס: x \n'), true); // only whitespace is normalised
+  assert.equal(r('סכום: 61; כמות: 3; מזהה כרטיס: x. סכום: 60; כמות: 3; מזהה כרטיס: x'), false); // contradictory extra answer
+  assert.equal(r('סכום: 60; כמות: 3; מזהה כרטיס: x.'), false);
+  assert.equal(r('SCHUM: 60'), false);
+});
+test('board task judge: exact answer, claim/close identity and order, time; missing lifecycle is inconclusive; side effects are not claimed', async () => {
+  const { evaluateBoardTask, expectedAnswer, TASK_NOTE, TASK_TITLE, taskEvents } = await import('../integrations/eval-board-task.mjs');
+  const { dayOf } = await import('../insights.js');
+  const card = 'board-abcdef0123456789-hermes';
+  assert.equal(expectedAnswer(card), `סכום: 60; כמות: 3; מזהה כרטיס: ${card}`);
+  const T0 = Date.now() - 3600_000;
+  const ev = (type, dt, extra = {}) => ({ id: type + dt, task_id: card, type, ts: T0 + dt, actor: 'hermes', to: 'hermes', ...extra });
+  const good = [ev('task.created', 0, { actor: 'owner', via: 'office-owner-session' }), ev('task.claimed', 2000), ev('task.done', 5000, { via: 'agent-report', text: expectedAnswer(card) })];
+  const audit = (events, over = {}) => ({ filters: { agent: 'hermes', type: 'task' }, truncated: false, days: [{ day: dayOf(T0), count: 10 }, { day: dayOf(T0 + 5000), count: 10 }], items: [{ kind: 'task', steps: events }], ...over });
+  const run = a => parseEvalResult(evaluateBoardTask({ audit: a, agent: 'hermes', card }), 'instinct', Date.now(), 'evaluator', ['hermes', 'instinct']);
+  const verdict = a => { const r = run(a); assert.deepEqual(r.errors, []); return r.result.assertions.map(x => x.passed); };
+  assert.deepEqual(verdict(audit(good)), [true, true, true]);
+  const wrong = [...good.slice(0, 2), ev('task.done', 5000, { via: 'agent-report', text: `סכום: 61; כמות: 3; מזהה כרטיס: ${card}` })];
+  assert.equal(verdict(audit(wrong))[0], false);
+  const twice = [...good.slice(0, 2), ev('task.done', 5000, { via: 'agent-report', text: `סכום: 61; כמות: 3; מזהה כרטיס: ${card}. סכום: 60; כמות: 3; מזהה כרטיס: ${card}` })];
+  assert.equal(verdict(audit(twice))[0], false);
+  // closed without a claim by the agent itself, or back-filled by the owner: observed facts, the order check fails
+  assert.equal(verdict(audit([good[0], ev('task.claimed', 2000, { actor: 'tobi' }), good[2]]))[1], false);
+  assert.equal(verdict(audit([good[0], good[1], ev('task.done', 5000, { actor: 'owner', via: 'owner-reconciliation', text: expectedAnswer(card) })]))[1], false);
+  assert.equal(verdict(audit([...good, ev('task.done', 6000, { via: 'agent-report', text: expectedAnswer(card) })]))[1], false);
+  const slow = [good[0], good[1], ev('task.done', 31 * 60_000, { via: 'agent-report', text: expectedAnswer(card) })];
+  assert.equal(verdict(audit(slow))[2], false);
+  // the scope statement is part of the posted run, and there is no side-effect assertion to read as a pass
+  const full = evaluateBoardTask({ audit: audit(good), agent: 'hermes', card });
+  assert.deepEqual(full.unknown_checks, []);
+  assert.match(full.title + full.trigger, /לא נבדק/);
+  assert.ok(!full.assertions.some(x => /תופעות|לא נגע/.test(x.label)));
+  // essential lifecycle evidence missing: INCONCLUSIVE, the CLI posts nothing (exit 3), whatever the answer says
+  const { spawnSync } = await import('node:child_process'); const { writeFileSync } = await import('node:fs');
+  for (const [name, evs] of [['no-created', good.slice(1)], ['no-claim', [good[0], good[2]]], ['no-close', good.slice(0, 2)], ['empty', []]]) {
+    assert.ok(evaluateBoardTask({ audit: audit(evs), agent: 'hermes', card }).unknown_checks.length >= 1, name);
+    writeFileSync('/tmp/inc-audit.json', JSON.stringify(audit(evs)));
+    const cli = spawnSync('node', [new URL('../integrations/eval-board-task.mjs', import.meta.url).pathname, '--audit', '/tmp/inc-audit.json', '--agent', 'hermes', '--card', card, '--office', 'http://127.0.0.1:9'], { encoding: 'utf8', env: { ...process.env, OFFICE_EVAL_TOKEN: 'x' } });
+    assert.equal(cli.status, 3, name); assert.match(cli.stderr, /INCONCLUSIVE/);
+  }
+  assert.ok(taskEvents([{ task_id: 't', type: 'message' }]).length === 0);
+  // the panel sends exactly this card
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  assert.ok(src.includes(`title: '${TASK_TITLE}'`) && src.includes(`note: '${TASK_NOTE}'`));
+  assert.ok(TASK_TITLE.startsWith('[בדיקת אמינות]')); // the dispatch gate still applies
+  assert.match(src, /LIVE\.filter\(a => a\.id === 'hermes'\)/);
+  assert.match(src, /online: !!\(v && v\.hasData && v\.status !== 'offline'\)/); // the panel will not send to an agent that reported nothing for 10 minutes
+  assert.match(readFileSync(new URL('../eval-view.js', import.meta.url), 'utf8'), /agents\.every\(a => a\.online\)/);
+});
