@@ -395,3 +395,20 @@ test('paused: nonterminal, never current or stuck, history kept, agent cannot re
   assert.equal((await call(path, { status: 'done', result: 'ok', evidence: 'ok' })).status, 200);
   assert.equal((await call(path, pause)).status, 409);
 });
+
+test('paused: pausing one task leaves the agent\'s other running task current, and a paused task can still be completed by its claim', async () => {
+  const { call, create } = await setup();
+  const a = (await json(await create('tab', '91111111-1234-1234-1234-123456789012', 'first'))).tasks[0];
+  const b = (await json(await create('tab', '92222222-1234-1234-1234-123456789012', 'second'))).tasks[0];
+  const ca = await json(await call('/api/inbox/' + a.id + '/claim', {}, 't'));
+  const cb = await json(await call('/api/inbox/' + b.id + '/claim', {}, 't'));
+  await call('/api/ingest', { kind: 'task.progress', note: 'again', claimToken: cb.claimToken, task: { id: b.id } }, 't'); // b is the latest current
+  assert.equal((await call('/api/tasks/' + b.id + '/status', { status: 'paused', result: 'parked', evidence: 'owner' })).status, 200);
+  const v = (await json(await call('/api/agents'))).agents.find(x => x.id === 'tab');
+  assert.equal(v.status, 'working'); assert.equal(v.current.id, a.id);
+  assert.equal(v.tasks.find(t => t.id === b.id).status, 'paused');
+  // the paused task's own claim may still settle it with a result; no second run is started
+  assert.equal((await call('/api/ingest', { kind: 'task.done', note: 'finished before pause landed', claimToken: cb.claimToken, task: { id: b.id } }, 't')).status, 200);
+  assert.equal((await json(await call('/api/tasks'))).tasks.find(t => t.id === b.id).status, 'done');
+  assert.equal((await call('/api/inbox/' + b.id + '/claim', { claimToken: cb.claimToken }, 't')).status, 409);
+});
