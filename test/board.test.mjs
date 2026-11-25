@@ -334,3 +334,27 @@ test('owner progress is distinct from claiming, keeps all revisions and cannot r
   assert.equal((await call(path, final)).status, 200);
   assert.equal((await call(path, second)).status, 409);
 });
+
+test('board: chaff is assignable on its own, "all" stays three, no Slack ping, only chaff token reads and claims it', async () => {
+  const { call, create } = await setup({ AGENT_TOKEN_CHAFF: 'c', SLACK_NOTIFY_TOKEN: 'xoxb-test-secret' });
+  const sends = []; const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, i) => { sends.push(JSON.parse(i.body)); return { ok: true, status: 200, json: async () => ({ ok: true, ts: '1794300000.000100' }) }; };
+  try {
+    const all = await json(await create('all')); assert.deepEqual(all.tasks.map(t => t.agent), ['instinct', 'hermes', 'tab']);
+    assert.equal(sends.length, 3);
+    const one = await json(await create('chaff', '77777777-1234-1234-1234-123456789012'));
+    assert.equal(one.status, 200); assert.deepEqual(one.tasks.map(t => t.agent), ['chaff']);
+    assert.equal(sends.length, 3, 'chaff has no Slack user: nothing is posted');
+    const inbox = await json(await call('/api/inbox', undefined, 'c')); assert.equal(inbox.tasks.length, 1); assert.equal(inbox.tasks[0].agent, 'chaff');
+    const id = inbox.tasks[0].id;
+    assert.equal((await call('/api/inbox/' + id + '/claim', {}, 't')).status, 403);
+    assert.equal((await call('/api/inbox?relay=1', undefined, 'c')).status, 403);
+    const claim = await json(await call('/api/inbox/' + id + '/claim', {}, 'c')); assert.ok(claim.claimToken);
+    assert.equal((await call('/api/inbox/' + id + '/claim', {}, 'c')).status, 409);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('board: chaff is unavailable until its token exists', async () => {
+  const { create } = await setup();
+  assert.equal((await create('chaff', '88888888-1234-1234-1234-123456789012')).status, 400);
+});

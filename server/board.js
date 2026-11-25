@@ -1,7 +1,9 @@
 // Durable owner-submitted requests. Agent reports cannot create a trusted board request.
 import { notPickedUp } from '../board-state.js';
 import { FILE_ID, MAX_FILES } from './files.js';
-export const BOARD_AGENTS = ['instinct', 'hermes', 'tab'];
+export const BOARD_AGENTS = ['instinct', 'hermes', 'tab', 'chaff'];
+// "All" keeps meaning the original three. chaff is assigned explicitly, one request at a time.
+export const ALL_AGENTS = ['instinct', 'hermes', 'tab'];
 export const BOARD_LIMIT = 300;
 export const TERMINAL = ['done', 'failed', 'cancelled']; // a settled task takes no more claims or reports
 // Agent-to-agent tickets (POST /api/inbox): limits per sending agent.
@@ -13,7 +15,7 @@ export const NOTE_MAX = 1500; // was 300: dictated notes and file descriptions n
 export function parseBoardTask(body, known) {
   const title = typeof body?.title === 'string' ? body.title.trim().replace(/\s+/g, ' ') : '';
   const note = typeof body?.note === 'string' ? body.note.trim() : '';
-  const agents = body?.agent === 'all' ? BOARD_AGENTS : [body?.agent];
+  const agents = body?.agent === 'all' ? ALL_AGENTS : [body?.agent];
   const requestId = typeof body?.requestId === 'string' ? body.requestId : '';
   const attachments = Array.isArray(body?.attachments) ? [...new Set(body.attachments.map(String))] : [];
   const errors = [];
