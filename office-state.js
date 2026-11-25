@@ -17,7 +17,7 @@ export const CHAT_MAX_PEOPLE = 4;                  // participants per chat.exch
 export const MAX_CHAIN = 8;                        // agents kept in a task's handoff chain
 export const STATUSES = ['working', 'idle', 'blocked', 'offline'];
 export const USAGE_FIELDS = ['messages', 'tokens', 'cost', 'tasks', 'calls', 'pct_of_quota'];
-const TASK_STATUSES = ['running', 'done', 'failed', 'blocked', 'queued', 'handed'];
+const TASK_STATUSES = ['running', 'done', 'failed', 'blocked', 'queued', 'handed', 'paused'];
 
 /* ---------------- sanitizers ---------------- */
 export function str(v, n) {
@@ -318,8 +318,8 @@ export function normalizeReport(body, now = Date.now()) {
       const ct = cleanTask(t, now);
       if (!ct) return null;
       const res = String(t.result ?? t.status ?? 'ok');
-      ct.status = /fail|error/.test(res) ? 'failed' : /block/.test(res) ? 'blocked' : /run|progress/.test(res) ? 'running' : /queue|todo|pending|planned/.test(res) ? 'queued' : 'done';
-      ct.ended = ct.status === 'running' || ct.status === 'queued' ? undefined : time(t.done_at ?? t.ended ?? t.ended_at, now);
+      ct.status = /fail|error/.test(res) ? 'failed' : /block/.test(res) ? 'blocked' : /paus/.test(res) ? 'paused' : /run|progress/.test(res) ? 'running' : /queue|todo|pending|planned/.test(res) ? 'queued' : 'done';
+      ct.ended = ct.status === 'running' || ct.status === 'queued' || ct.status === 'paused' ? undefined : time(t.done_at ?? t.ended ?? t.ended_at, now);
       return ct;
     }).filter(Boolean);
   }
@@ -357,6 +357,7 @@ export function feedNote(r) {
   if (r.kind === 'task.start') return t ? `התחיל: ${t}` : 'התחיל משימה';
   if (r.kind === 'task.done') return (r.taskStatus === 'failed' ? 'נכשל: ' : 'סיים: ') + t;
   if (r.kind === 'task.failed') return t ? `נכשל: ${t}` : 'משימה נכשלה';
+  if (r.kind === 'task.paused') return t ? `הושהה: ${t}` : 'משימה הושהתה';
   if (r.kind === 'task.queued') return t ? `בתור: ${t}` : 'משימה נוספה לתור';
   if (r.kind === 'review' && r.review) {
     const v = r.review, n = v.findings.length;
@@ -447,12 +448,24 @@ export function applyReport(prev, r, now = Date.now()) {
       if (!a.current) a.status = r.status || 'idle';
       break;
     }
+    case 'task.paused': { // owner parked the task on purpose: not done, not working, never a stuck alert
+      const t = r.task || (a.current ? { ...a.current } : null);
+      if (t) {
+        const match = a.tasks.find(x => (t.id && x.id === t.id) || (!t.id && x.title === t.title));
+        upsertTask(a, { ...(match || {}), ...t, id: t.id || match?.id || 't' + now.toString(36), since: match?.since || t.since, status: 'paused', ended: undefined, ...(r.note ? { note: r.note } : {}), ...(r.board ? { board: r.board } : {}) });
+        const i = a.tasks.findIndex(x => (t.id && x.id === t.id) || (!t.id && x.title === t.title));
+        if (i >= 0) delete a.tasks[i].ended;
+        if (a.current && ((t.id && a.current.id === t.id) || (!t.id && a.current.title === t.title))) a.current = null;
+      }
+      if (!a.current) a.status = 'idle';
+      break;
+    }
     case 'task.queued': { // planned work: shows in the board's "to do" column, does not change status
       const t = r.task || { id: '', title: r.note || 'משימה', link: '', since: now };
       if (!t.id) t.id = 'q' + now.toString(36);
       const existing = a.tasks.find(x => x.id === t.id);
       // r.assigned is set only by the office itself (the "give a task" button), never parsed from an agent's report
-      if (!existing || existing.status === 'queued') upsertTask(a, { ...t, status: 'queued', ...(r.assigned ? { assigned: true, note: r.assigned.note || '' } : {}), ...(r.board ? { board: r.board } : {}) });
+      if (!existing || existing.status === 'queued' || existing.status === 'paused') upsertTask(a, { ...t, status: 'queued', ...(r.assigned ? { assigned: true, note: r.assigned.note || '' } : {}), ...(r.board ? { board: r.board } : {}) });
       break;
     }
     case 'status': {

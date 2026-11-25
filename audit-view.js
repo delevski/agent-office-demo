@@ -6,7 +6,7 @@ const TZ = 'Asia/Jerusalem';
 const NAMES = { 'owner-session': 'חיבור בעלים', ori: 'אורי', instinct: 'inna', hermes: 'Hermes', tab: 'tobi', board: 'הלוח', legacy: 'מפתח כללי' };
 const CHANNELS = { whatsapp: 'WhatsApp', slack: 'Slack', imessage: 'iMessage', email: 'מייל', phone: 'טלפון', board: 'לוח', site: 'האתר', github: 'GitHub', handoff: 'העברה', other: 'אחר' };
 const PR_STATUS = { open: ['נפתח', 'st-open'], reviewed: ['נבדק', 'st-rev'], changes_requested: ['נדרשו תיקונים', 'st-warn'], approved: ['אושר', 'st-ok'], merged: ['מוזג', 'st-merged'], deployed: ['באוויר', 'st-live'] };
-const TASK_STATUS = { blocked: ['ממתין', 'st-warn'], queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'] };
+const TASK_STATUS = { blocked: ['ממתין', 'st-warn'], queued: ['ממתין', 'st-open'], running: ['בעבודה', 'st-rev'], done: ['הושלם', 'st-live'], failed: ['נכשל', 'st-bad'], cancelled: ['בוטל', 'st-off'], paused: ['מושהה', 'st-off'] };
 const VERDICT = { approved: ['אישר', 'v-ok'], changes_requested: ['ביקש תיקונים', 'v-warn'], commented: ['הגיב', 'v-note'] };
 const TYPES = [['', 'הכל'], ['pr', 'PR'], ['message', 'הודעות'], ['task', 'משימות'], ['deploy', 'פריסות']];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

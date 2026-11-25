@@ -257,15 +257,21 @@ export class EventHub {
       if (!task) return json({ error: 'not found' }, 404);
       const status = body.status || 'done', last = task.reconciliations?.at(-1);
       if (last?.status === status && last?.result === body.result && last?.evidence === body.evidence) return json({ ok: true, duplicate: true, task: boardView(task, now) });
-      if (!['queued', 'running', 'blocked'].includes(task.status)) return json({ error: 'already settled' }, 409);
+      if (!['queued', 'running', 'blocked', 'paused'].includes(task.status)) return json({ error: 'already settled' }, 409);
       if (!body.result?.trim() || !body.evidence?.trim()) return json({ error: 'result and evidence required' }, 400);
       const record = { status, actor: 'owner-session', via: 'owner-reconciliation', recordedAt: now, previousStatus: task.status, previousResult: task.result || '', result: body.result, evidence: body.evidence };
-      if (!['done', 'running', 'blocked'].includes(status)) return json({ error: 'invalid status' }, 400);
+      if (!['done', 'running', 'blocked', 'paused'].includes(status)) return json({ error: 'invalid status' }, 400);
       task.reconciliations ||= []; task.reconciliations.push(record);
       if (status === 'done') task.completion = record;
-      task.status = status; task.updated = now; task.result = body.result;
+      // Pausing parks the task (nonterminal, never stuck). Resuming returns it to running, or to the queue if no agent ever claimed it.
+      const wasPaused = task.status === 'paused';
+      if (status === 'paused') { if (!wasPaused) task.pausedFrom = task.status; task.pausedAt = now; }
+      const next = status === 'running' && wasPaused && !task.claimToken ? 'queued' : status;
+      if (wasPaused && status !== 'paused') { task.resumedAt = now; delete task.pausedAt; }
+      task.status = next; task.updated = now; task.result = body.result;
       await this.state.storage.put('board:' + task.id, task);
-      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, status === 'done' ? 'task.done' : 'task.progress')) }));
+      const kind = status === 'done' ? 'task.done' : status === 'paused' ? 'task.paused' : next === 'queued' ? 'task.queued' : 'task.progress';
+      await this.fetch(new Request('https://hub/report', { method: 'POST', body: JSON.stringify(boardReport(task, kind)) }));
       await this.addAudit([auditFromTask(task, status === 'done' ? 'done' : 'progress', now)]);
       return json({ ok: true, task: boardView(task, now) });
     }
@@ -302,6 +308,7 @@ export class EventHub {
       const body = await request.json(), task = this.board.find(t => t.id === body.id);
       if (!task || task.agent !== body.agent) return json({ error: 'not assigned' }, 403);
       if (TERMINAL.includes(task.status)) return json({ error: 'already settled' + (task.status === 'cancelled' ? ' (cancelled by the owner)' : '') }, 409);
+      if (task.status === 'paused') return json({ error: 'paused by the owner; wait for resume' }, 409);
       if (task.claimToken && task.claimToken !== body.claimToken) return json({ error: 'already claimed; do not repeat execution' }, 409);
       const first = !task.claimToken;
       task.claimToken ||= crypto.randomUUID();
@@ -332,6 +339,7 @@ export class EventHub {
         return ['task.done', 'task.failed'].includes(r.kind) && task.status === (r.kind === 'task.failed' ? 'failed' : r.taskStatus || 'done') && result === task.result
           ? json({ ok: true, duplicate: true }) : json({ error: 'already settled' }, 409);
       }
+      if (task.status === 'paused' && ['task.start', 'task.progress'].includes(r.kind)) return json({ error: 'paused by the owner; wait for resume' }, 409);
       task.status = r.kind === 'task.failed' ? 'failed' : r.kind === 'task.done' ? r.taskStatus || 'done' : 'running';
       task.updated = now; task.result = result || task.result;
       task.link = r.task.link || task.link;

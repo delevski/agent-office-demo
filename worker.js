@@ -248,7 +248,7 @@ export default {
         return privateJson({ error: 'result and evidence required (max 2000 / 1000 characters)' }, 400);
       }
       const status = complete[2] === 'complete' ? 'done' : body.status;
-      if (!['done', 'running', 'blocked'].includes(status)) return privateJson({ error: 'status must be running, blocked or done' }, 400);
+      if (!['done', 'running', 'blocked', 'paused'].includes(status)) return privateJson({ error: 'status must be running, blocked, paused or done' }, 400);
       const res = await hub(env).fetch('https://hub/board/complete', { method: 'POST', body: JSON.stringify({ id: complete[1], status, result: body.result.trim(), evidence: body.evidence.trim() }) });
       return privateJson(await res.json(), res.status);
     }

@@ -3,7 +3,7 @@ import { displayName, displayText, displayRecord } from './display-labels.js?v=1
 // Ori's login and the per-agent live panel.
 import { createRoomCore } from './room-core.js?v=1';
 import { createConcept } from './concept.js?v=5';
-import { cardModel, cardHtml, placeCard } from './agent-card.js?v=1';
+import { cardModel, cardHtml, placeCard } from './agent-card.js?v=2';
 import { createBell } from './sound.js';
 import { notPickedUp, waitingMinutes } from './board-state.js?v=1';
 import { boardView } from './board-view.js?v=1';
@@ -684,8 +684,8 @@ function createLiveAgent(handle, name) {
 
 /* ---------------- live agent panel ---------------- */
 const STATUS_HE = { working: 'עובד עכשיו', idle: 'פנוי', blocked: 'תקוע · ממתין', offline: 'לא מחובר' };
-const TASK_ICON = { running: ic('loader-circle', 't-run'), done: ic('circle-check', 't-ok'), failed: ic('circle-x', 't-bad'), blocked: ic('octagon-alert', 't-warn'), queued: ic('inbox', 't-q'), handed: ic('corner-up-right', 't-q') };
-const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור', handed: 'הועבר' };
+const TASK_ICON = { running: ic('loader-circle', 't-run'), done: ic('circle-check', 't-ok'), failed: ic('circle-x', 't-bad'), blocked: ic('octagon-alert', 't-warn'), queued: ic('inbox', 't-q'), paused: ic('pause', 't-q'), handed: ic('corner-up-right', 't-q') };
+const TASK_HE = { running: 'בעבודה', done: 'הושלם', failed: 'נכשל', blocked: 'תקוע', queued: 'בתור', paused: 'מושהה', handed: 'הועבר' };
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -939,7 +939,7 @@ async function openAudit() {
     try {
       auditLoading ||= Promise.all([
         new Promise(res => { if (document.getElementById('audit-css')) return res(); const l = document.createElement('link'); l.id = 'audit-css'; l.rel = 'stylesheet'; l.href = './audit.css?v=1'; l.onload = l.onerror = () => res(); document.head.appendChild(l); setTimeout(res, 2500); }),
-        import('./audit-view.js?v=4'),
+        import('./audit-view.js?v=5'),
       ]);
       const [, mod] = await auditLoading;
       auditApi ||= mod.createAudit({ body: $('#audit-ov-body'), filters: $('#audit-ov-filters'), sub: $('#audit-ov-sub'), load: qs => apiGet('./api/audit' + (qs ? '?' + qs : '')) });
@@ -1518,7 +1518,7 @@ function boardData() {
       const card = { title: t.title || t.id, agent: a, status: t.status, link: t.link, ts: t.ended || t.since || 0, chain: t.chain, handed_to: t.handed_to, assigned: t.assigned, note: t.note, board: t.board, id: t.id };
       card.when = card.ts ? when(card.ts) : '';
       if (t.status === 'running') cols.doing.push(card);
-      else if (t.status === 'queued' || t.status === 'blocked' || t.status === 'failed') cols.todo.push(card);
+      else if (t.status === 'queued' || t.status === 'blocked' || t.status === 'paused' || t.status === 'failed') cols.todo.push(card);
       else cols.done.push(card);
     }
   }
@@ -1570,7 +1570,7 @@ function renderBoardOverlay() {
       ${list.length ? list.map(c => `<article class="kb-card" style="--ac:${esc(c.agent.color)}">
         <span class="kb-emb">${emblemSVG(c.agent, 30, { title: false })}</span>
         <div class="grow"><div class="kb-title">${safeUrl(c.link) ? `<a href="${safeUrl(c.link)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
-        <div class="kb-meta">${c.board?.source === 'agent-ticket' ? `<span class="kb-manual kb-ticket" title="טיקט שסוכן פתח לסוכן אחר">${ic('handshake', 'inline')} מאת ${esc(nameOf(c.board.from))} ל-${esc(c.agent.name)}</span> · ` : c.assigned ? `<span class="kb-manual" title="נוסף ידנית מהלוח">${ic('pencil', 'inline')} ידני</span> · ` : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'handed' ? ` · ${ic('corner-up-right', 'inline')} הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
+        <div class="kb-meta">${c.board?.source === 'agent-ticket' ? `<span class="kb-manual kb-ticket" title="טיקט שסוכן פתח לסוכן אחר">${ic('handshake', 'inline')} מאת ${esc(nameOf(c.board.from))} ל-${esc(c.agent.name)}</span> · ` : c.assigned ? `<span class="kb-manual" title="נוסף ידנית מהלוח">${ic('pencil', 'inline')} ידני</span> · ` : ''}${esc(c.agent.name)}${c.status === 'failed' ? ' · <b class="kb-fail">נכשל</b>' : c.status === 'blocked' ? ' · ממתין' : c.status === 'paused' ? ' · מושהה' : c.status === 'handed' ? ` · ${ic('corner-up-right', 'inline')} הועבר ל-${esc(nameOf(c.handed_to))}` : ''}${c.when ? ' · ' + esc(c.when) : ''}</div>${chainHtml(c, true)}${boardStatusHtml(c)}${c.note ? `<div class="kb-note">${esc(c.note)}</div>` : ''}</div>
       </article>`).join('') : `<div class="kb-empty">${esc(bd.empty?.[k] || '—')}</div>`}
     </section>`;
   }).join('');
@@ -1583,15 +1583,17 @@ function boardStatusHtml(c) {
   if (!c.board) return '';
   const b = c.board;
   const waiting = isUnclaimed(b);
-  const label = b.status === 'running' ? (b.reconciliations?.at(-1)?.status === 'running' ? 'בעבודה · סטטוס עודכן דרך חיבור בעלים' : 'הסוכן קיבל ועובד') : b.status === 'done' ? (b.completion ? 'נסגר בדיעבד דרך חיבור בעלים' : 'הסוכן דיווח שהושלם') : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.status === 'cancelled' ? (b.cancelledBy ? 'בוטלה דרך חיבור בעלים' : 'בוטלה על ידי אורי') : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
+  const label = b.status === 'running' ? (b.reconciliations?.at(-1)?.status === 'running' ? 'בעבודה · סטטוס עודכן דרך חיבור בעלים' : 'הסוכן קיבל ועובד') : b.status === 'done' ? (b.completion ? 'נסגר בדיעבד דרך חיבור בעלים' : 'הסוכן דיווח שהושלם') : b.status === 'blocked' ? 'ממתין לאישור או מידע' : b.status === 'paused' ? 'מושהה · לא תקוע, ימשיך כשנחזור אליו' : b.status === 'failed' ? 'הסוכן דיווח על כשל' : b.status === 'cancelled' ? (b.cancelledBy ? 'בוטלה דרך חיבור בעלים' : 'בוטלה על ידי אורי') : b.delivery === 'delivered' ? 'נשלחה הודעה · ממתין לקבלה' : b.delivery === 'error' ? 'שליחת ההודעה נכשלה' : 'ממתין לאיסוף';
   const warn = waiting ? `<div class="board-warn" role="alert"><span class="bw-ic">${ic('triangle-alert', 'inline')}</span> לא נלקחה כבר ${waitingMinutes(b)} דקות${b.pings ? ` · נשלח פינג ${b.pings > 1 ? b.pings + ' פעמים' : 'פעם אחת'}` : ''}</div>` : '';
   const retry = b.delivery === 'error' && b.status === 'queued';
-  const cancel = auth.loggedIn && ['queued', 'running', 'blocked'].includes(b.status) ? `<button class="btn btn-ghost board-cancel" data-task="${esc(b.id)}">ביטול משימה</button>` : '';
+  const pauseBtn = auth.loggedIn && ['queued', 'running', 'blocked'].includes(b.status) ? `<button class="btn btn-ghost board-pause" data-task="${esc(b.id)}">השהיה</button>` : '';
+  const resumeBtn = auth.loggedIn && b.status === 'paused' ? `<button class="btn btn-ghost board-resume" data-task="${esc(b.id)}">המשך משימה</button>` : '';
+  const cancel = auth.loggedIn && ['queued', 'running', 'blocked', 'paused'].includes(b.status) ? `<button class="btn btn-ghost board-cancel" data-task="${esc(b.id)}">ביטול משימה</button>` : '';
   const ping = waiting && auth.loggedIn && !retry ? `<button class="btn btn-ghost board-ping" data-task="${esc(b.id)}">פינג שוב</button>` : '';
-  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${warn}${filesHtml(b)}${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${retry ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}${ping}${cancel}`;
+  return `<div class="board-status" role="status">${esc(label)}${b.stale ? ' · ללא עדכון מעל 30 דקות' : ''}</div>${warn}${filesHtml(b)}${b.deliveryNote ? `<div class="kb-note">${esc(b.deliveryNote)}</div>` : ''}${b.result ? `<div class="board-result"><b>תוצאה / עדכון</b><br>${esc(b.result)}</div>` : ''}${retry ? `<button class="btn btn-ghost board-retry" data-task="${esc(b.id)}">ניסיון שליחת הודעה נוסף</button>` : ''}${ping}${pauseBtn}${resumeBtn}${cancel}`;
 }
 function onBoardAction(e) {
-  const btn = e.target.closest('.board-retry, .board-ping, .board-cancel');
+  const btn = e.target.closest('.board-retry, .board-ping, .board-cancel, .board-pause, .board-resume');
   if (!btn) return;
   e.stopPropagation();
   if (btn.classList.contains('board-cancel')) { // two taps: nothing is cancelled by accident
@@ -1601,6 +1603,18 @@ function onBoardAction(e) {
       if (r.status === 401) { onLoggedOut(true); return; }
       if (r.status === 409) toast('המשימה כבר הסתיימה');
       else if (!r.ok) throw new Error('cancel failed'); else toast('המשימה בוטלה');
+      await loadAgents(); renderBoardOverlay(); renderCPanel();
+    });
+  }
+  if (btn.classList.contains('board-pause') || btn.classList.contains('board-resume')) {
+    const pause = btn.classList.contains('board-pause');
+    return withBusy(btn, pause ? 'משהה…' : 'ממשיך…', async () => {
+      const body = pause ? { status: 'paused', result: 'הושהתה על ידי אורי. לא הושלמה ולא תקועה, ממתינה לחזרה אליה.', evidence: 'owner pause from board' }
+        : { status: 'running', result: 'חודשה על ידי אורי אחרי השהיה.', evidence: 'owner resume from board' };
+      const r = await fetch('./api/tasks/' + encodeURIComponent(btn.dataset.task) + '/status', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      if (r.status === 401) { onLoggedOut(true); return; }
+      if (r.status === 409) toast('המשימה כבר הסתיימה');
+      else if (!r.ok) throw new Error('pause failed'); else toast(pause ? 'המשימה הושהתה' : 'המשימה חודשה');
       await loadAgents(); renderBoardOverlay(); renderCPanel();
     });
   }

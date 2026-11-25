@@ -9,7 +9,7 @@
 // GL context) gets a light 2D fallback instead: a round emblem avatar per agent that sits at its desk and walks the same
 // paths, with the same name pills and speech bubbles.
 import { CALIB } from './concept-calib.js';
-import { actorBox, hitTest } from './agent-card.js?v=1';
+import { actorBox, hitTest } from './agent-card.js?v=2';
 
 export const ROOM_DAY = './assets/office-room-day.jpg';
 export const ROOM_NIGHT = './assets/office-room-night.jpg';
