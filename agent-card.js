@@ -71,7 +71,7 @@ export function cardModel({ agent, status = 'idle', sleeping = false, view = nul
       const tasks = Array.isArray(v.tasks) ? v.tasks : [];
       recent = tasks.filter(t => t && (t.status === 'done' || t.status === 'failed')).map(t => ({ title: clean(t.title || t.id), status: t.status, ts: t.ended || t.since || 0, link: safeLink(t.link) }))
         .sort((a, b) => b.ts - a.ts).slice(0, RECENT_MAX);
-      open = tasks.filter(t => t && (t.status === 'queued' || t.status === 'blocked')).map(t => ({ title: clean(t.title || t.id), status: t.status, ts: t.since || 0, when: '' }));
+      open = tasks.filter(t => t && (t.status === 'queued' || t.status === 'blocked' || t.status === 'paused')).map(t => ({ title: clean(t.title || t.id), status: t.status, ts: t.since || 0, when: '' }));
       lastSeen = v.lastSeen || null;
     }
   } else if (demo) {
@@ -107,7 +107,7 @@ export function cardHtml(m, { esc, emblem = '' }) {
     ? `<ul class="oc-list">${m.recent.map(r => `<li class="oc-${r.status}"><span class="oc-ic" aria-label="${r.status === 'failed' ? 'נכשל' : 'הושלם'}">${r.status === 'failed' ? '✕' : '✓'}</span><span class="oc-t">${a(r.title, r.link)}</span><span class="oc-w">${esc(r.whenLabel)}</span></li>`).join('')}</ul>`
     : `<div class="oc-none">עוד אין משימות שהסתיימו</div>`;
   const opn = m.open.length
-    ? `<ul class="oc-list">${m.open.map(r => `<li class="oc-${r.status}"><span class="oc-ic" aria-hidden="true">${r.status === 'blocked' ? '!' : '○'}</span><span class="oc-t">${esc(r.title)}</span><span class="oc-w">${esc(r.when || (r.status === 'blocked' ? 'תקוע' : 'בתור'))}</span></li>`).join('')}${m.openMore ? `<li class="oc-more">ועוד ${m.openMore}</li>` : ''}</ul>`
+    ? `<ul class="oc-list">${m.open.map(r => `<li class="oc-${r.status}"><span class="oc-ic" aria-hidden="true">${r.status === 'blocked' ? '!' : r.status === 'paused' ? '⏸' : '○'}</span><span class="oc-t">${esc(r.title)}</span><span class="oc-w">${esc(r.when || (r.status === 'blocked' ? 'תקוע' : 'בתור'))}</span></li>`).join('')}${m.openMore ? `<li class="oc-more">ועוד ${m.openMore}</li>` : ''}</ul>`
     : `<div class="oc-none">אין משימות פתוחות בלוח</div>`;
   return `<button class="oc-x" type="button" aria-label="סגירה"><span aria-hidden="true">✕</span></button>
     <div class="oc-head"><span class="oc-emb" style="--ac:${esc(m.color)}">${emblem}</span>
