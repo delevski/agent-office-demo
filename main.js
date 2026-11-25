@@ -1259,7 +1259,7 @@ function loadAssignMedia() {
 function openAssign(agentId = '') {
   const sel = $('#assign-agent');
   const list = LIVE.length ? LIVE : [];
-  sel.innerHTML = '<option value="all">כולם: inna, Hermes, tobi</option>' + list.filter(a => ['instinct', 'hermes', 'tab'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
+  sel.innerHTML = '<option value="all">כולם: inna, Hermes, tobi</option>' + list.filter(a => ['instinct', 'hermes', 'tab', 'chaff'].includes(a.id)).map(a => `<option value="${esc(a.id)}"${a.id === agentId ? ' selected' : ''}>${esc(a.name)}</option>`).join('');
   assignRequestId = ''; assignFingerprint = '';
   $('#assign-title').value = ''; $('#assign-note').value = ''; $('#assign-err').textContent = '';
   media?.reset();

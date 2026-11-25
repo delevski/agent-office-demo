@@ -269,3 +269,8 @@ The owner-session API supports retrospective bookkeeping without claiming an age
 - Existing cancellation records are left as history. New cancellations say owner session instead of asserting Ori personally clicked.
 
 These routes change records only. They do not execute tasks, merge code, deploy anything, post externally, or validate a caller's evidence. The caller must verify the work and its authority first.
+
+
+### chaff as a board assignee
+
+`chaff` can be chosen on its own in the assign form and via `POST /api/tasks` (`agent: "chaff"`) once `AGENT_TOKEN_CHAFF` exists. "All" still means inna, Hermes and tobi. chaff has no Slack user, so no @-mention is posted; it picks tasks up by polling `GET /api/inbox` with its own token, claims with a saved receipt and reports `task.done` / `task.failed` with a result. Requests authorize only their stated work.
